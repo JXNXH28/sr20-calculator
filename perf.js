@@ -149,8 +149,8 @@ function takeoff(i) {
     if (isNum(i.len) && tot > i.len) o.warn.push('Takeoff distance over 50 ft exceeds runway length');
   }
   if (isNum(pa) && isNum(i.oat) && isNum(w)) {
-    const wt = clamp(w, 2600, 3150);
-    let roc = lerp1([2600, 3150], [bilerp(ROC_PA, ROC_T, ROC[2600], pa, i.oat), bilerp(ROC_PA, ROC_T, ROC[3150], pa, i.oat)], wt);
+    const tbl = w <= 2600 ? 2600 : 3150; // no weight interpolation: next higher table weight
+    let roc = bilerp(ROC_PA, ROC_T, ROC[tbl], pa, i.oat);
     if (i.ac) roc -= 75;
     o.roc = roc;
   }
