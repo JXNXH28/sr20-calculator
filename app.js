@@ -254,9 +254,10 @@ function drawLoad(c, s, L) {
     put(c, name, gx(x) + 4, gy(y) + 2.5, { size: 7, color: col });
   });
 }
-function fmtDate(d) {
+const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+function fmtDate(d) { // 2026-11-11 -> "11 NOV 26"
   const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(d || '');
-  return m ? `${m[3]}.${m[2]}.${m[1].slice(2)}` : d || '';
+  return m ? `${m[3]} ${MON[+m[2] - 1]} ${m[1].slice(2)}` : d || '';
 }
 
 async function buildPdf(s, L, sheets, occ) {
