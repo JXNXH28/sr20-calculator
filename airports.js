@@ -1,5 +1,6 @@
 // LAT US approved airport list (THB Appendix A, updated 07 APR 2026) + FAA field elevation (FAA ADDS, ft).
 // Keyed by FAA ident. Flags: solo, dual, day VFR, day IFR, night VFR, night IFR. dist: NM from GYR.
+// tz: IANA time zone (AZ has no DST). wx / mv: see NOAW below.
 // lim: SR20 limits parsed from the notes. tw: max tailwind (kt) per runway end, '*' = all runways.
 // noTO: runway ends not authorized for takeoff; noUse: not authorized at all. Runway ids without leading zero.
 // Used by app.js (autocomplete, info, checks) and Wx.latChecks (tested). Verify against the current THB.
@@ -46,10 +47,19 @@ const A = {
   INW: ['Winslow, AZ', 'NYYYNN', 126.1, 4941.1, { mtom: 3000, maxTemp: 30, tw: { 4: 5, 22: 5 }, noUse: ['11', '29'], hi: true }, ['Rwy 4/22 primary. Do not use 11/29 (poor runway condition).', ...HI(3000, 30), 'Max tailwind Rwy 04/22 5 kt.', 'Fuel at Wiseman Aviation. ' + FIN]],
   NYL: ['Yuma, AZ', 'NYYYNY', 121.2, 213.3, {}, ["Caution: Rwy 3/21 have arresting cables.", 'Military airplanes. LAHSO operations.', 'Park and fuel at Million Air. ' + FIN]],
 };
+// Fields aviationweather.gov has no record for: nearby METAR stations [id, NM] (from the LAT notes / nearest)
+// and approximate magnetic variation (west positive). Runways for these come from FAA ADDS.
+const NOAW = {
+  E63: { wx: [['KGXF', 5], ['KBXK', 27]], mv: -10 },
+  '1AZ0': { wx: [['KA39', 19], ['KGYR', 20]], mv: -10 },
+  P20: { wx: [['KHII', 25]], mv: -11 },
+  E25: { wx: [], mv: -10 },
+};
 const FLAGS = ['solo', 'dual', 'dayVfr', 'dayIfr', 'nightVfr', 'nightIfr'];
 const LAT = {};
 Object.entries(A).forEach(([id, [name, f, dist, elev, lim, notes]]) => {
-  const o = { id, icao: /^[A-Z]{3}$/.test(id) ? 'K' + id : id, name, dist, elev, lim, notes };
+  const o = { id, icao: /^[A-Z]{3}$/.test(id) ? 'K' + id : id, name, dist, elev, lim, notes, tz: /, AZ$/.test(name) ? 'America/Phoenix' : 'America/Los_Angeles' };
+  if (NOAW[id]) Object.assign(o, NOAW[id]);
   FLAGS.forEach((k, i) => { o[k] = f[i] === 'Y'; });
   LAT[id] = o;
 });

@@ -7,30 +7,43 @@ the filled PDF is generated client-side onto the original form.
 **Training aid only. Verify all values against the THB, the POH and the aircraft weight report.**
 
 ## Use
-Enter the date, registration (autocompletes from the fleet table, which fills BEM and CG), and the route, for example
-`KGYR → KBXK → KGYR`. Stops autocomplete from the LAT approved airport list. Each takeoff gets its own T/O data sheet
-(two per page). Then enter seats, baggage and fuel, and press **Fetch airports & weather**.
+The page guides you top to bottom; the banner at the top always names the next missing thing.
+1. **Flight**: route (for example `KGYR → KBXK → KGYR`, stops autocomplete from the LAT approved airport list), date,
+   departure time, registration (autocompletes from the fleet table, which fills BEM and CG) and flight number.
+2. **People & fuel**: seat weights and take-off fuel. Baggage, trim, name and BEM/CG sit under "Usually the same".
+3. **Check each takeoff and the landing**: airport, runway and weather load by themselves once route and time are set.
+   Each card shows the values used and a verdict; anything can be changed under "Edit runway & weather values".
+   Values you typed are kept when the weather reloads ("↺ use fetched" drops them).
+4. **Print**: download or open the PDF.
+
+Sheets: one T/O data sheet per takeoff, whose landing box is the **emergency return** (same runway and weather, at
+T/O weight), plus one sheet for the **landing at the destination** (weather at arrival time, everything at landing
+mass). Two sheets per page, then the load sheet for the first departure.
 
 Per leg: flight time and trip fuel; at each stop, ground time and an optional "refuel to" amount. Leg TOW = first TOM
-minus the fuel burned on earlier legs (or ZFM + refuelled fuel). The load sheet is for the first departure; its trip
-fuel is everything burned before the first refuel.
+minus the fuel burned on earlier legs (or ZFM + refuelled fuel). Density altitude = PA + 120 × (OAT − ISA), ISA rounded
+to whole °C.
 
-The landing box on each T/O sheet is the **emergency return**: same airport, runway and weather as that takeoff, at
-T/O weight, flaps 100 (override per leg under "Runway, weather & emergency landing").
+Everything you enter is saved in this browser's localStorage only. A flight saved on an earlier day keeps route,
+people and settings; its date, time and weather are cleared.
 
 ## Airport data
-- `airports.js`: LAT US approved airport list (THB Appendix A, 07 APR 2026): approvals, distance from GYR, notes, and
-  limits checked automatically (LAT MTOM, max T/O temperature, max tailwind per runway, runways not authorized for
-  takeoff, which are also skipped by the runway auto-pick). Update it when the appendix changes.
-- Field elevation from FAA ADDS (feet, same source as the Chart Supplement), queried live. Fallback: the LAT list
-  value, then aviationweather.gov (whole metres, ±3 ft).
+- `airports.js`: LAT US approved airport list (THB Appendix A, 07 APR 2026): approvals, distance from GYR, notes, time
+  zone, and limits checked automatically (LAT MTOM, max T/O temperature, max tailwind per runway, runways not
+  authorized). Update it when the appendix changes.
+- Field elevation from FAA ADDS (feet, same source as the Chart Supplement). Fallback: the LAT list value, then
+  aviationweather.gov (whole metres, ±3 ft).
+- Fields without an ICAO code: A39 and P08 report as KA39 / KP08. E63, 1AZ0, P20 and E25 have no weather station:
+  runways come from FAA ADDS, METARs from the nearby stations listed in `airports.js` (E63: KGXF, then KBXK), shown
+  as "from KGXF (5 NM away)", otherwise the forecast model.
 
-## Weather autofill
-Data for each takeoff's time (leg 1: the departure time typed, or now; later legs: previous takeoff + flight time + ground time):
-- airport, magnetic variation and runway courses: aviationweather.gov
+## Weather
+Loaded for each sheet's own time (takeoff times follow from departure time, flight times and ground times):
 - time within 60 min of a METAR (now or up to 48 h back): that METAR (wind, temp, QNH)
 - later: TAF wind if one covers the time, otherwise the NOAA GFS/HRRR model via Open-Meteo; model temp and QNH
   (QNH from model station pressure, marked "confirm with ATIS")
+- all requests run in parallel with time limits; the forecast model is only waited for when no METAR covers the time.
+  Airport data is cached in the browser for 30 days; weather older than 30 min reloads.
 
 aviationweather.gov sends no CORS headers, so `api/aw/[ep].js` relays its airport/metar/taf endpoints.
 

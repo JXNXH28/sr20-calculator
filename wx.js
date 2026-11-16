@@ -25,6 +25,30 @@ function runwayEnds(ap) {
   return out;
 }
 
+// Runway ends from FAA ADDS "Runways" features (for fields aviationweather does not know, e.g. E63).
+// True course from the long edge of the runway polygon; mv: magnetic variation (west positive) or null.
+function runwaysFromFaa(features, mv) {
+  const out = [], D = Math.PI / 180;
+  (features || []).forEach((f) => {
+    const a = f.attributes || {}, ring = f.geometry && f.geometry.rings && f.geometry.rings[0];
+    if (!ring || !a.DESIGNATOR) return;
+    let best = null;
+    for (let i = 1; i < ring.length; i++) {
+      const dx = (ring[i][0] - ring[i - 1][0]) * Math.cos(ring[i][1] * D), dy = ring[i][1] - ring[i - 1][1], d = dx * dx + dy * dy;
+      if (!best || d > best.d) best = { d, brg: (Math.atan2(dx, dy) / D + 360) % 360 };
+    }
+    const surf = /^(ASPH|CONC|PEM|BIT)/i.test(a.COMP_CODE || '') ? 'paved' : 'dry';
+    String(a.DESIGNATOR).split('/').forEach((end) => {
+      const m = /^(\d{1,2})([LRC]?)$/.exec(end.trim());
+      if (!m) return;
+      const want = m[1] * 10 - (mv || 0), off = Math.abs(((best.brg - want + 540) % 360) - 180); // which way along the edge
+      const hdgT = off <= 90 ? best.brg : (best.brg + 180) % 360;
+      out.push({ id: end.trim(), len: Math.round(a.LENGTH), surf, hdgT, hdg: norm360(hdgT + (mv || 0)) });
+    });
+  });
+  return out;
+}
+
 // Headwind component, true wind vs true runway course.
 const headwind = (dirT, spd, hdgT) => spd * Math.cos((dirT - hdgT) * Math.PI / 180);
 
@@ -108,22 +132,23 @@ function pickWeather({ metars, taf, om, t, unit }) {
 
 // LAT approved-airport limits (airports.js entry) for one takeoff. rwy: runway end id, head: headwind kt (negative = tailwind).
 const rwyKey = (id) => String(id || '').trim().toUpperCase().replace(/^0+/, '');
-function rwyAllowed(apt, id) {
+// landing: true for the destination sheet, where "full stop landing only" runways are fine.
+function rwyAllowed(apt, id, landing) {
   const l = (apt && apt.lim) || {}, k = rwyKey(id);
-  return !(l.noTO || []).includes(k) && !(l.noUse || []).includes(k);
+  return (landing || !(l.noTO || []).includes(k)) && !(l.noUse || []).includes(k);
 }
-function latChecks(apt, { rwy, tow, oat, head }) {
+function latChecks(apt, { rwy, tow, oat, head, landing }) {
   const w = [], l = (apt && apt.lim) || {}, k = rwyKey(rwy), n = apt && apt.id;
   if (!apt) return w;
   if (k && (l.noUse || []).includes(k)) w.push(`${n}: Rwy ${rwy} not authorized for LAT`);
-  else if (k && (l.noTO || []).includes(k)) w.push(`${n}: Rwy ${rwy} not authorized for takeoff (full stop landing only)`);
-  if (l.mtom && tow > l.mtom) w.push(`${n}: T/O mass ${Math.round(tow)} lb exceeds LAT MTOM ${l.mtom} lb`);
+  else if (!landing && k && (l.noTO || []).includes(k)) w.push(`${n}: Rwy ${rwy} not authorized for takeoff (full stop landing only)`);
+  if (l.mtom && tow > l.mtom) w.push(`${n}: ${landing ? 'landing' : 'T/O'} mass ${Math.round(tow)} lb exceeds LAT MTOM ${l.mtom} lb`);
   if (l.maxTemp != null && oat > l.maxTemp) w.push(`${n}: OAT ${oat} °C above LAT max ${l.maxTemp} °C for T/O`);
   const tw = l.tw ? (l.tw[k] !== undefined ? l.tw[k] : l.tw['*']) : undefined;
   if (tw !== undefined && head < 0 && -head > tw + 1e-9) w.push(`${n}: tailwind ${Math.round(-head)} kt exceeds LAT max ${tw} kt${k ? ' for Rwy ' + rwy : ''}`);
   return w;
 }
 
-const Wx = { magVar, runwayEnds, headwind, qnhFromSurface, altimeter, nearestMetar, tafAt, interpHourly, gustOrNull, pickWeather, hhmm, norm360, rwyKey, rwyAllowed, latChecks };
+const Wx = { magVar, runwayEnds, runwaysFromFaa, headwind, qnhFromSurface, altimeter, nearestMetar, tafAt, interpHourly, gustOrNull, pickWeather, hhmm, norm360, rwyKey, rwyAllowed, latChecks };
 if (typeof module !== 'undefined' && module.exports) module.exports = Wx; else root.Wx = Wx;
 })(this);

@@ -83,7 +83,7 @@ function pressureAlt(elev, qnh) {
   if (!isNum(elev) || !isNum(qnh)) return NaN;
   return qnh > 80 ? elev + (1013 - qnh) * 30 : elev + (29.92 - qnh) * 1000; // 30 ft/hPa = 1000 ft/inHg
 }
-const isaTemp = (pa) => 15 - 2 * pa / 1000;
+const isaTemp = (pa) => Math.round(15 - 2 * pa / 1000); // whole °C, as worked on paper
 const densityAlt = (pa, oat) => pa + 120 * (oat - isaTemp(pa));
 
 // Wind relative to runway. head>0 headwind, <0 tailwind; cross>0 from right.
@@ -245,7 +245,8 @@ function loadSheet(i) {
 
 // Fuel and T/O weight for every takeoff of a multi-leg flight.
 // legs: [{ trip, refuel }] in USG; trip = fuel burned on that leg, refuel = fuel on board at that takeoff after refuelling
-// (ignored for the first leg, whose fuel is fuelTO). Returns { legs: [{ fuel, tow }], loadTrip, warn }.
+// (ignored for the first leg, whose fuel is fuelTO). Returns { legs: [{ fuel, tow }], loadTrip, endFuel, lm, warn }.
+// endFuel / lm: fuel and mass at the destination, after the last leg.
 // loadTrip: trip fuel for the load sheet = everything burned before the first refuel.
 function legWeights(zfm, fuelTO, legs) {
   const o = { legs: [], loadTrip: 0, warn: [] };
@@ -259,6 +260,8 @@ function legWeights(zfm, fuelTO, legs) {
     if (trip > fuel) o.warn.push(`Leg ${i + 1}: trip fuel exceeds fuel on board`);
     fuel -= trip;
   });
+  o.endFuel = fuel;
+  o.lm = isNum(zfm) && isNum(fuel) ? zfm + fuel * LB_PER_USG : NaN;
   return o;
 }
 
