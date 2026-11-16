@@ -1,10 +1,9 @@
-// Airport + weather autofill. Airport/METAR/TAF via our /api/aw relay (aviationweather.gov), forecasts from Open-Meteo.
-// Which source answers for the requested time is decided in wx.js.
+// Airport + weather autofill, one run per takeoff (leg). Airport/METAR/TAF via our /api/aw relay (aviationweather.gov),
+// field elevation from FAA ADDS (feet, CORS-enabled), forecasts from Open-Meteo. Source choice per time: wx.js.
 (function () {
 'use strict';
-const P = window.Perf, W = window.Wx;
+const W = window.Wx, A = window.App, LAT = window.LAT_AIRPORTS;
 const el = (id) => document.getElementById(id);
-const setv = (id, v) => { const e = el(id); if (!e) return; e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
 async function jget(u) {
   const r = await fetch(u);
   if (!r.ok) throw new Error(`${u.split('?')[0]} → HTTP ${r.status}`);
@@ -25,88 +24,99 @@ function localToUtc(date, time, tz) {
 }
 const localHM = (ms, tz) => new Intl.DateTimeFormat('en-GB', { timeZone: tz || 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(ms);
 const OM = 'https://api.open-meteo.com/v1/forecast?hourly=temperature_2m,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m&models=gfs_seamless&wind_speed_unit=kn&timezone=auto&timeformat=unixtime&past_days=1&forecast_days=16';
-const hhmm = (ms) => W.hhmm(ms / 1000);
+const ADDS = 'https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/US_Airport/FeatureServer/0/query?outFields=IDENT,NAME,ELEVATION&returnGeometry=true&outSR=4326&f=json&where=';
+async function faaAirport(ident) {
+  const j = await jget(ADDS + encodeURIComponent(`IDENT='${ident.replace(/[^A-Z0-9]/g, '')}'`)).catch(() => null);
+  const f = j && j.features && j.features[0];
+  return f ? { elev: f.attributes.ELEVATION, name: f.attributes.NAME, lat: f.geometry && f.geometry.y, lon: f.geometry && f.geometry.x } : null;
+}
+const autoTime = {}; // leg -> time we filled in; anything else in the field was typed
+const leg = (i, k) => A.leg(i, k);
+const set = (i, k, v) => A.set(`L${i}.${k}`, v);
 
-async function run(box, depWhen) {
-  const p = box.dataset.p, land = box.dataset.land === '1';
-  const k = (n) => p + (land ? 'l_' : '') + n;
-  const stat = box.querySelector('.fstat'), sel = box.querySelector('.rsel');
-  if (location.protocol === 'file:') { stat.textContent = 'This page was opened as a file. Run `node server.js` in the project folder, then open http://localhost:8765 in your browser.'; return null; }
-  const log = [];
-  const say = (t) => { log.push(t); stat.textContent = log.join('\n'); };
+// Returns the takeoff time (UTC ms) so the next leg can follow on, or null on failure.
+async function run(i, prevWhen) {
+  const stat = el('fstat' + i), sel = el('rsel' + i);
+  if (!stat) return null;
+  if (location.protocol === 'file:') { stat.textContent = 'Opened as a file: run `node server.js` and open http://localhost:8765.'; return null; }
+  const out = [], warn = [];
+  const show = (err) => { stat.innerHTML = [...out, ...warn.map((w) => `<span class="note">${w}</span>`), err ? `<span class="err">${err}</span>` : ''].filter(Boolean).join(' · '); };
+  const icao = A.stop(i), lat = LAT.find(icao);
+  if (!/^[A-Z0-9]{3,4}$/.test(icao)) { show('Enter the ICAO code in the route first.'); return null; }
   stat.textContent = 'Fetching…'; sel.hidden = true;
-  const icao = (el(k('apt')).value || '').trim().toUpperCase();
-  if (!/^[A-Z0-9]{3,4}$/.test(icao)) { stat.textContent = 'Enter the ICAO code first (e.g. KSEF).'; return null; }
   try {
-    const ap = (await jget(`/api/aw/airport?ids=${icao}`))[0];
-    if (!ap) throw new Error('Airport not found: ' + icao);
-    const elevFt = Math.round(ap.elev * 3.28084);
-    setv(k('elev'), elevFt);
-    say(`${ap.name.trim()} · elev ≈ ${elevFt} ft (NOAA gives whole metres, ±3 ft – check chart)`);
+    let ap = (await jget(`/api/aw/airport?ids=${icao}`).catch(() => []))[0];
+    const ident = (ap && ap.faaId) || (lat && lat.id) || icao.replace(/^K(?=[A-Z]{3}$)/, '');
+    const faa = await faaAirport(ident);
+    if (!ap && !faa) throw new Error('Airport not found: ' + icao);
+    if (!ap) ap = { name: faa.name, lat: faa.lat, lon: faa.lon, country: 'US', runways: [] }; // e.g. A39, 1AZ0: no aviationweather entry
+    const elev = faa ? faa.elev : lat ? lat.elev : ap.elev * 3.28084;
+    set(i, 'elev', Math.round(elev));
+    out.push(`${(lat ? lat.name : ap.name).trim()} · elev ${Math.round(elev)} ft${faa ? ' (FAA)' : lat ? ' (LAT list)' : ''}`);
+    if (!faa && !lat) warn.push('elevation from whole metres, ±3 ft – check chart');
     const mv = W.magVar(ap.magdec);
-    if (mv === null) say('No magnetic variation available – wind left in true degrees.');
+    if (mv === null) warn.push('no magnetic variation – wind left in true degrees');
 
     // Forecast model (also gives the time zone). Failure is not fatal: METAR/TAF still work.
     const om = await jget(`${OM}&latitude=${ap.lat}&longitude=${ap.lon}`).catch(() => null);
     const tz = om && om.timezone;
-    if (!tz) say('Forecast model unreachable – time treated as UTC, only METAR/TAF available.');
-    const date = el('date').value, tEl = el(k('time'));
-    const typed = tEl.value && tEl.value !== tEl.dataset.auto; // user-entered time wins over the autofilled one
+    if (!tz) warn.push('forecast model unreachable – time treated as UTC');
+    const date = A.get('date'), tv = leg(i, 'time');
+    const typed = i === 0 && tv && tv !== autoTime[i];
     let when = Date.now();
-    if (typed && date) when = localToUtc(date, tEl.value, tz || 'UTC');
-    else if (land && depWhen) when = depWhen + (parseFloat(el('dur').value) || 60) * 60000;
-    if (!typed) { tEl.dataset.auto = localHM(when, tz); setv(k('time'), tEl.dataset.auto); }
-    say(`${land ? 'Arrival' : 'Departure'} ${tEl.value} ${tz || 'UTC'} = ${hhmm(when)}${typed || !land ? '' : ' (departure + flight time)'}`);
+    if (typed && date) when = localToUtc(date, tv, tz || 'UTC');
+    else if (i > 0 && prevWhen) when = prevWhen + ((parseFloat(leg(i - 1, 'dur')) || 0) + (parseFloat(leg(i, 'gnd')) || 0)) * 60000;
+    if (!typed) { autoTime[i] = localHM(when, tz); set(i, 'time', autoTime[i]); }
+    out.push(`T/O ${localHM(when, tz)} ${tz ? 'local' : 'UTC'}`);
 
     const hours = Math.min(48, Math.max(3, Math.ceil((Date.now() - when) / 3600000) + 2));
-    const metars = await jget(`/api/aw/metar?ids=${icao}&hours=${hours}`).catch(() => []);
-    const taf = (await jget(`/api/aw/taf?ids=${icao}`).catch(() => []))[0] || null;
+    const awOk = !!ap.icaoId;
+    const metars = awOk ? await jget(`/api/aw/metar?ids=${icao}&hours=${hours}`).catch(() => []) : [];
+    const taf = awOk ? (await jget(`/api/aw/taf?ids=${icao}`).catch(() => []))[0] || null : null;
     const wx = W.pickWeather({ metars, taf, om, t: Math.floor(when / 1000), unit: /^(US|CA)$/.test(ap.country) ? 'inHg' : 'hPa' });
 
     const wind = wx.wind;
     if (wind && typeof wind.dir === 'number') {
       const md = Math.round(W.norm360(wind.dir + (mv || 0)) / 10) * 10 || 360;
-      setv(k('wdir'), md); setv(k('wspd'), wind.spd || 0); setv(k('wgust'), wind.gst || '');
-      say(`Wind ${wind.src}: ${String(wind.dir).padStart(3, '0')}°T/${wind.spd}${wind.gst ? 'G' + wind.gst : ''} kt → ${String(md).padStart(3, '0')}° magnetic`);
-    } else if (wind) { setv(k('wdir'), ''); setv(k('wspd'), wind.spd || 0); setv(k('wgust'), wind.gst || ''); say(`Wind ${wind.src}: variable ${wind.spd} kt – ${el('vrbWorst').checked ? 'worst case assumed (full tailwind and crosswind).' : 'no head/crosswind applied.'}`); }
-    else say('No wind data found.');
+      set(i, 'wdir', md); set(i, 'wspd', wind.spd || 0); set(i, 'wgust', wind.gst || '');
+    } else if (wind) { set(i, 'wdir', ''); set(i, 'wspd', wind.spd || 0); set(i, 'wgust', wind.gst || ''); }
+    else warn.push('no wind data');
+    if (wind) out.push(`wind ${wind.src}`);
+    if (wx.raw) set(i, 'remarks', wx.raw.replace(/^(METAR|SPECI)\s+/, '').replace(/\s+RMK.*$/, ''));
+    if (wx.qnh) set(i, 'qnh', wx.qnh.v); else warn.push('no QNH data');
+    if (wx.temp) set(i, 'oat', wx.temp.v); else warn.push('no temperature data');
+    const other = [wx.temp, wx.qnh].filter((x) => x && (!wind || x.src !== wind.src));
+    if (other.length) out.push(`temp/QNH ${other[0].src}`);
+    if (wx.qnh && /model/.test(wx.qnh.src)) warn.push('QNH is a forecast – confirm with ATIS');
 
-    if (!land && wx.raw) setv(k('remarks'), wx.raw.replace(/^(METAR|SPECI)\s+/, '').replace(/\s+RMK.*$/, ''));
-    if (wx.qnh) { setv(k('qnh'), wx.qnh.v); say(`QNH ${wx.qnh.v} ${wx.qnh.unit} from ${wx.qnh.src}${/model/.test(wx.qnh.src) ? ' – forecast, confirm with ATIS' : ''}`); }
-    else say('No QNH data found.');
-    if (wx.temp) { setv(k('oat'), wx.temp.v); say(`Temp ${wx.temp.v} °C from ${wx.temp.src}`); }
-    else say('No temperature data found.');
-
-    // runways
-    const ends = W.runwayEnds(ap);
-    if (!ends.length) { say('No runway data.'); return when; }
+    // runways: only ends LAT allows for takeoff
+    const all = W.runwayEnds(ap), ends = all.filter((e) => W.rwyAllowed(lat, e.id));
+    if (!ends.length) { warn.push(all.length ? 'no runway authorized for takeoff' : 'no runway data – enter runway manually'); show(); return when; }
     const hasDir = wind && typeof wind.dir === 'number', calm = !(wind && wind.spd >= 3);
     ends.forEach((e) => { e.head = hasDir ? W.headwind(wind.dir, wind.spd, e.hdgT) : 0; });
     const best = ends.slice().sort((a, b) => (calm ? b.len - a.len : (b.head - a.head) || (b.len - a.len)))[0];
-    sel.innerHTML = ends.map((e, i) => `<option value="${i}">RWY ${e.id} · ${e.len} ft · ${e.hdg}° · ${e.head >= 0 ? 'HW' : 'TW'} ${Math.abs(Math.round(e.head))}${e.surf === 'dry' ? ' · grass/other' : ''}</option>`).join('');
-    const apply = (e) => {
-      setv(k('rwy'), e.id); setv(k('hdg'), e.hdg); setv(k('len'), e.len); setv(k('surf'), e.surf);
-    };
+    sel.innerHTML = ends.map((e, k) => `<option value="${k}">RWY ${e.id} · ${e.len} ft · ${e.hdg}° · ${e.head >= 0 ? 'HW' : 'TW'} ${Math.abs(Math.round(e.head))}${e.surf === 'dry' ? ' · grass/other' : ''}</option>`).join('');
+    const apply = (e) => { set(i, 'rwy', e.id); set(i, 'hdg', e.hdg); set(i, 'len', e.len); set(i, 'surf', e.surf); };
     sel.value = String(ends.indexOf(best)); sel.hidden = false; sel.onchange = () => apply(ends[+sel.value]);
     apply(best);
-    say(`Runway ${best.id} selected (${calm ? 'longest, wind calm' : 'most headwind'}) – change in the list above if needed.`);
-    if (land) say('Runway length is the full length – use LDA if displaced threshold.');
+    show();
     return when;
   } catch (e) {
-    const msg = /Failed to fetch|NetworkError|HTTP 404|Cross origin|access control|Load failed/.test(e.message) ? 'Cannot reach the weather service. Check your connection (locally: run `node server.js` and open http://localhost:8765).' : e.message;
-    stat.innerHTML = log.map((l) => l.replace(/[<>&]/g, '')).join('\n') + `\n<span class="err">${msg.replace(/[<>&]/g, '')}</span>`;
+    const msg = /Failed to fetch|NetworkError|HTTP 404|Cross origin|access control|Load failed/.test(e.message) ? 'Cannot reach the weather service. Check your connection (locally: run `node server.js`).' : e.message;
+    show(msg.replace(/[<>&]/g, ''));
     return null;
   }
 }
+
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('.fbtn');
-  if (b) run(b.closest('.fetch'));
-  const g = e.target.closest('.gobtn');
+  if (b) { const i = +b.dataset.leg; run(i, i ? autoWhen[i - 1] : null).then((w) => { autoWhen[i] = w; }); return; }
+  const g = e.target.closest('#go');
   if (!g) return;
-  const [dep, arr] = g.closest('.fetchall').querySelectorAll('.fetch');
   g.disabled = true;
-  const when = await run(dep);
-  if (when) await run(arr, when);
+  let when = null;
+  for (let i = 0; i < A.nLegs(); i++) { when = await run(i, when); autoWhen[i] = when; }
   g.disabled = false;
 });
+const autoWhen = {};
 })();

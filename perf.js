@@ -243,6 +243,25 @@ function loadSheet(i) {
   return o;
 }
 
-const Perf = { TO, LAND, ROC, SPEEDS, ENVELOPE, ARM, MAX, LB_PER_USG, lerp1, bilerp, pressureAlt, isaTemp, densityAlt, windComponents, speedRow, takeoff, landing, loadSheet, inPoly, isNum };
+// Fuel and T/O weight for every takeoff of a multi-leg flight.
+// legs: [{ trip, refuel }] in USG; trip = fuel burned on that leg, refuel = fuel on board at that takeoff after refuelling
+// (ignored for the first leg, whose fuel is fuelTO). Returns { legs: [{ fuel, tow }], loadTrip, warn }.
+// loadTrip: trip fuel for the load sheet = everything burned before the first refuel.
+function legWeights(zfm, fuelTO, legs) {
+  const o = { legs: [], loadTrip: 0, warn: [] };
+  let fuel = fuelTO, refuelled = false;
+  legs.forEach((l, i) => {
+    if (i > 0 && isNum(l.refuel) && l.refuel > 0) { fuel = l.refuel; refuelled = true; }
+    if (fuel < 0) o.warn.push(`Leg ${i + 1}: fuel on board at takeoff below zero – check trip fuel`);
+    o.legs.push({ fuel, tow: isNum(zfm) && isNum(fuel) ? zfm + fuel * LB_PER_USG : NaN });
+    const trip = isNum(l.trip) ? l.trip : 0;
+    if (!refuelled) o.loadTrip += trip;
+    if (trip > fuel) o.warn.push(`Leg ${i + 1}: trip fuel exceeds fuel on board`);
+    fuel -= trip;
+  });
+  return o;
+}
+
+const Perf = { TO, LAND, ROC, SPEEDS, ENVELOPE, ARM, MAX, LB_PER_USG, lerp1, bilerp, pressureAlt, isaTemp, densityAlt, windComponents, speedRow, takeoff, landing, loadSheet, legWeights, inPoly, isNum };
 if (typeof module !== 'undefined' && module.exports) module.exports = Perf; else root.Perf = Perf;
 })(this);

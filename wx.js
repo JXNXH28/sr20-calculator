@@ -106,6 +106,24 @@ function pickWeather({ metars, taf, om, t, unit }) {
   return out;
 }
 
-const Wx = { magVar, runwayEnds, headwind, qnhFromSurface, altimeter, nearestMetar, tafAt, interpHourly, gustOrNull, pickWeather, hhmm, norm360 };
+// LAT approved-airport limits (airports.js entry) for one takeoff. rwy: runway end id, head: headwind kt (negative = tailwind).
+const rwyKey = (id) => String(id || '').trim().toUpperCase().replace(/^0+/, '');
+function rwyAllowed(apt, id) {
+  const l = (apt && apt.lim) || {}, k = rwyKey(id);
+  return !(l.noTO || []).includes(k) && !(l.noUse || []).includes(k);
+}
+function latChecks(apt, { rwy, tow, oat, head }) {
+  const w = [], l = (apt && apt.lim) || {}, k = rwyKey(rwy), n = apt && apt.id;
+  if (!apt) return w;
+  if (k && (l.noUse || []).includes(k)) w.push(`${n}: Rwy ${rwy} not authorized for LAT`);
+  else if (k && (l.noTO || []).includes(k)) w.push(`${n}: Rwy ${rwy} not authorized for takeoff (full stop landing only)`);
+  if (l.mtom && tow > l.mtom) w.push(`${n}: T/O mass ${Math.round(tow)} lb exceeds LAT MTOM ${l.mtom} lb`);
+  if (l.maxTemp != null && oat > l.maxTemp) w.push(`${n}: OAT ${oat} °C above LAT max ${l.maxTemp} °C for T/O`);
+  const tw = l.tw ? (l.tw[k] !== undefined ? l.tw[k] : l.tw['*']) : undefined;
+  if (tw !== undefined && head < 0 && -head > tw + 1e-9) w.push(`${n}: tailwind ${Math.round(-head)} kt exceeds LAT max ${tw} kt${k ? ' for Rwy ' + rwy : ''}`);
+  return w;
+}
+
+const Wx = { magVar, runwayEnds, headwind, qnhFromSurface, altimeter, nearestMetar, tafAt, interpHourly, gustOrNull, pickWeather, hhmm, norm360, rwyKey, rwyAllowed, latChecks };
 if (typeof module !== 'undefined' && module.exports) module.exports = Wx; else root.Wx = Wx;
 })(this);

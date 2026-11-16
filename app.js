@@ -1,6 +1,8 @@
 (function () {
   "use strict";
-  const P = window.Perf;
+  const P = window.Perf,
+    W = window.Wx,
+    LAT = window.LAT_AIRPORTS;
   const $ = (s) => document.querySelector(s);
   const esc = (s) =>
     String(s).replace(
@@ -9,53 +11,26 @@
     );
 
   /* ---------- input definitions ---------- */
-  // [key, label, type, extra]  types: t text, n number, c checkbox, s select, a textarea
-  // Simple form: only what the pilot normally types. Everything else autofills or sits under "details".
-  const SIMPLE = [
-    ["date", "Date", "d"],
-    ["reg", "A/C registration", "t"],
-    ["a.apt", "From (ICAO)", "t"],
-    ["a.time", "Departure time (local)", "h"],
-    ["a.l_apt", "To (ICAO)", "t"],
-    ["dur", "Flight time (min)", "n"],
-    ["w1", "Seat 1 / pilot (lb)", "n"],
-    ["w2", "Seat 2 (lb)", "n"],
-    ["w3", "Seat 3 (lb)", "n"],
-    ["w4", "Seat 4 (lb)", "n"],
-    ["qfuel", "", "q"],
-    ["fuelTO", "Take-off fuel (USG)", "n"],
-    ["fuelTrip", "Trip fuel (USG)", "n"],
-    ["bem", "Basic empty mass (lb)", "n"],
-    ["bemCg", "BEM CG (in)", "n"],
-    ["bemNote", "", "i"],
-    ["go", "", "g"],
-  ];
-  const GENERAL = [
-    ["flight", "Flight", "t"],
-    ["prep", "Prepared by", "t"],
-    ["bag", "Baggage (lb)", "n"],
-    [
-      "vrbWorst",
-      "Variable wind: assume worst case (full tailwind + crosswind)",
-      "c",
-    ],
-  ];
+  // [key, label, type, extra]  types: t text, n number, c checkbox, s select, a textarea, d date, h time
   const SURF = [
     ["paved", "Paved"],
     ["dry", "Dry grass"],
     ["wet", "Wet grass"],
   ];
-  const TOF = [
-    ["apt", "Airport (ICAO)", "t"],
-    ["time", "Local time (HH:MM)", "h"],
-    ["fetch", "", "f"],
+  const FLAPS = [
+    ["100", "100 %"],
+    ["50", "50 %"],
+    ["0", "0 %"],
+  ];
+  // Runway & weather of one takeoff (Ln.<key>). Autofilled by "Fetch", editable here.
+  const RWYWX = [
     ["elev", "Elevation (ft)", "n"],
     ["rwy", "Runway", "t"],
-    ["hdg", "Runway heading (°)", "n"],
+    ["hdg", "Runway heading (°M)", "n"],
     ["len", "Runway length (ft)", "n"],
     ["slope", "Slope % (+up / −down)", "n"],
     ["surf", "Surface", "s", SURF],
-    ["wdir", "Wind dir (°)", "n"],
+    ["wdir", "Wind dir (°M)", "n"],
     ["wspd", "Wind speed (kt)", "n"],
     ["wgust", "Gust (kt)", "n"],
     ["qnh", "QNH (inHg or hPa)", "n"],
@@ -63,43 +38,40 @@
     ["ac", "Air conditioning ON", "c"],
     ["trim", "Trim", "t"],
     ["tow", "T.O.W. override (lb)", "n"],
+    ["eflaps", "Emergency landing flaps", "s", FLAPS],
+    ["ewt", "Emergency landing mass override (lb)", "n"],
     ["remarks", "ATIS / remarks", "a"],
   ];
-  const LDF = [
-    ["l_apt", "Destination (ICAO)", "t"],
-    ["l_time", "Local time (HH:MM)", "h"],
-    ["l_fetch", "", "f"],
-    ["l_elev", "Elevation (ft)", "n"],
-    ["l_rwy", "Runway", "t"],
-    ["l_hdg", "Runway heading (°)", "n"],
-    ["l_len", "Runway length (ft)", "n"],
-    ["l_slope", "Slope % (+up / −down)", "n"],
-    ["l_surf", "Surface", "s", SURF],
-    ["l_wdir", "Wind dir (°)", "n"],
-    ["l_wspd", "Wind speed (kt)", "n"],
-    ["l_wgust", "Gust (kt)", "n"],
-    ["l_qnh", "QNH (inHg or hPa)", "n"],
-    ["l_oat", "OAT (°C)", "n"],
-    [
-      "l_flaps",
-      "Landing flaps",
-      "s",
-      [
-        ["100", "100 %"],
-        ["50", "50 %"],
-        ["0", "0 %"],
-      ],
-    ],
-    ["ldw", "Landing mass override (lb)", "n"],
-  ];
-
-  const SIMPLE_KEYS = new Set(["apt", "time", "fetch", "l_apt", "l_fetch"]);
-  const detail = (defs) => defs.filter(([k]) => !SIMPLE_KEYS.has(k));
-  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 10);
+  const LEG_DEFAULTS = {
+    time: "",
+    dur: 60,
+    trip: 15,
+    refuel: "",
+    gnd: 30,
+    elev: "",
+    rwy: "",
+    hdg: "",
+    len: "",
+    slope: 0,
+    surf: "paved",
+    wdir: "",
+    wspd: "",
+    wgust: "",
+    qnh: 29.92,
+    oat: 15,
+    ac: false,
+    trim: "T/O 0",
+    tow: "",
+    eflaps: "100",
+    ewt: "",
+    remarks: "",
+  };
+  const today = () =>
+    new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 10);
   const DEFAULTS = {
-    date: today,
+    date: today(),
     reg: "N123AV",
     flight: "D1_1",
     prep: "",
@@ -112,105 +84,16 @@
     bag: 18,
     vrbWorst: true,
     fuelTO: 38.5,
-    fuelTrip: 15,
-    dur: 60,
-    "a.on": true,
-    "b.on": false,
+    nR: 2,
+    R0: "KGYR",
+    R1: "KGYR",
   };
-  ["a", "b"].forEach((p) => {
-    Object.assign(DEFAULTS, {
-      [p + ".apt"]: "",
-      [p + ".elev"]: "",
-      [p + ".rwy"]: "",
-      [p + ".hdg"]: "",
-      [p + ".len"]: "",
-      [p + ".slope"]: 0,
-      [p + ".surf"]: "paved",
-      [p + ".wdir"]: "",
-      [p + ".wspd"]: "",
-      [p + ".wgust"]: "",
-      [p + ".qnh"]: 29.92,
-      [p + ".oat"]: 15,
-      [p + ".ac"]: false,
-      [p + ".trim"]: "T/O 0",
-      [p + ".tow"]: "",
-      [p + ".remarks"]: "",
-      [p + ".l_apt"]: "",
-      [p + ".time"]: "",
-      [p + ".l_time"]: "",
-      [p + ".l_rwy"]: "",
-      [p + ".l_elev"]: "",
-      [p + ".l_hdg"]: "",
-      [p + ".l_len"]: "",
-      [p + ".l_slope"]: 0,
-      [p + ".l_surf"]: "paved",
-      [p + ".l_wdir"]: "",
-      [p + ".l_wspd"]: "",
-      [p + ".l_wgust"]: "",
-      [p + ".l_qnh"]: 29.92,
-      [p + ".l_oat"]: 15,
-      [p + ".l_flaps"]: "100",
-      [p + ".ldw"]: "",
-    });
-  });
-
-  /* ---------- build input panel ---------- */
-  function fieldHTML(id, label, type, opts) {
-    if (type === "f")
-      return `<div class="wide fetch" data-p="${id.split(".")[0]}." data-land="${id.includes("l_") ? 1 : 0}"><button type="button" class="fbtn">Fetch airport &amp; weather</button><select class="rsel" hidden></select><div class="fstat"></div></div>`;
-    if (type === "g")
-      return '<div class="wide fetchall"><button type="button" class="gobtn">Fetch airports &amp; weather</button><div class="fetch" data-p="a." data-land="0"><span class="rl">Departure runway</span><select class="rsel" hidden></select><div class="fstat"></div></div><div class="fetch" data-p="a." data-land="1"><span class="rl">Landing runway</span><select class="rsel" hidden></select><div class="fstat"></div></div></div>';
-    if (type === "i")
-      return '<div class="wide bemnote" id="bemNote"></div>';
-    if (type === "q")
-      return '<div class="wide quick"><span>Take-off fuel (after 1.5 USG taxi):</span><button type="button" data-fuel="54.5">56 USG → 54.5</button><button type="button" data-fuel="38.5">40 USG → 38.5</button></div>';
-    if (type === "c")
-      return `<label class="chk wide"><input type="checkbox" id="${id}" data-k="${id}"> ${label}</label>`;
-    let ctl;
-    if (type === "s")
-      ctl = `<select id="${id}" data-k="${id}">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select>`;
-    else if (type === "a")
-      ctl = `<textarea id="${id}" data-k="${id}" rows="2"></textarea>`;
-    else
-      ctl = `<input id="${id}" data-k="${id}" type="${type === "n" ? "number" : type === "d" ? "date" : type === "h" ? "time" : "text"}" ${type === "n" ? 'step="any"' : ""}>`;
-    return `<label class="${type === "a" ? "wide" : ""}"><span>${label}</span>${ctl}</label>`;
-  }
-  const grid = (id, defs, prefix = "") =>
-    defs.map(([k, l, t, o]) => fieldHTML(prefix + k, l, t, o)).join("");
-  function section(title, body, open) {
-    return `<details ${open ? "open" : ""}><summary>${title}</summary><div class="fg">${body}</div></details>`;
-  }
-  $("#inputs").innerHTML =
-    section("Flight", grid("s", SIMPLE), true) +
-    section("Details – flight & baggage", grid("g", GENERAL)) +
-    section("Details – sheet 1 takeoff", grid("a", detail(TOF), "a.")) +
-    section("Details – sheet 1 landing", grid("a", detail(LDF), "a.")) +
-    section(
-      "Sheet 2 – takeoff (optional)",
-      fieldHTML("b.on", "Fill in second T/O data sheet", "c") +
-        grid("b", TOF, "b."),
-    ) +
-    section("Sheet 2 – landing", grid("b", LDF, "b."));
-
-  // ?noserver hides the weather autofill and shows the manual inputs instead.
-  if (/[?&]noserver/.test(location.search)) {
-    document.body.classList.add("noserver");
-    ["a.time", "dur", "a.l_time", "b.time", "b.l_time"].forEach((id) => {
-      const e = document.getElementById(id);
-      if (e) e.closest("label").classList.add("wx");
-    });
-    document.querySelectorAll("#inputs details").forEach((d, i) => {
-      if (i >= 1 && i <= 3) d.open = true;
-      const s = d.querySelector("summary");
-      const t = s.textContent.replace("Details – ", "");
-      s.textContent = t[0].toUpperCase() + t.slice(1);
-    });
-  }
 
   /* ---------- state ---------- */
-  const KEY = "sr20calc.v1",
+  // Flat map: flight keys (date, reg, w1 …), route stops R0…R{nR-1}, leg keys L{i}.<field>.
+  const KEY = "sr20calc.v2",
+    OLDKEY = "sr20calc.v1",
     BEMKEY = "sr20calc.bem";
-  const els = [...document.querySelectorAll("[data-k]")];
   function lsGet(k) {
     try {
       return JSON.parse(localStorage.getItem(k));
@@ -225,31 +108,157 @@
       /* ignore */
     }
   }
-  function setAll(vals) {
-    els.forEach((el) => {
-      const v = vals[el.dataset.k];
+  // v1 (fixed sheet 1 / sheet 2) → v2 (route): first sheet becomes leg 1, its destination the second stop.
+  function migrate(o) {
+    if (!o) return null;
+    const s = {};
+    Object.keys(DEFAULTS).forEach((k) => {
+      if (o[k] !== undefined) s[k] = o[k];
+    });
+    const a = (k) => o["a." + k];
+    if (a("apt")) {
+      s.R0 = a("apt");
+      s.R1 = a("l_apt") || a("apt");
+      s.nR = 2;
+    }
+    Object.keys(LEG_DEFAULTS).forEach((k) => {
+      if (a(k) !== undefined && k !== "time") s["L0." + k] = a(k);
+    });
+    if (o.dur !== undefined) s["L0.dur"] = o.dur;
+    if (o.fuelTrip !== undefined) s["L0.trip"] = o.fuelTrip;
+    return s;
+  }
+  const state = Object.assign(
+    {},
+    DEFAULTS,
+    lsGet(KEY) || migrate(lsGet(OLDKEY)) || {},
+  );
+  state.date = today(); // never carry yesterday's date over
+  const num = (v) =>
+    v === "" || v === undefined || v === null ? NaN : parseFloat(v);
+  const fin = P.isNum;
+  const nStops = () => Math.max(1, parseInt(state.nR, 10) || 1);
+  const nLegs = () => Math.max(1, nStops() - 1);
+  const stop = (i) => String(state["R" + i] || "").trim().toUpperCase();
+  const lk = (i, k) => `L${i}.${k}`;
+  const lg = (i, k) =>
+    state[lk(i, k)] !== undefined ? state[lk(i, k)] : LEG_DEFAULTS[k];
+  function save() {
+    const keep = Object.assign({}, state);
+    delete keep.date;
+    Object.keys(keep).forEach((k) => {
+      if (/^L\d+\.time$/.test(k)) delete keep[k]; // never carry old times over
+    });
+    lsSet(KEY, keep);
+  }
+
+  /* ---------- building the input panel ---------- */
+  function control(id, label, type, opts) {
+    const dk = `id="${id}" data-k="${id}"`;
+    if (type === "c")
+      return `<label class="chk wide"><input type="checkbox" ${dk}> ${label}</label>`;
+    let ctl;
+    if (type === "s")
+      ctl = `<select ${dk}>${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select>`;
+    else if (type === "a") ctl = `<textarea ${dk} rows="2"></textarea>`;
+    else
+      ctl = `<input ${dk} type="${{ n: "number", d: "date", h: "time" }[type] || "text"}"${type === "n" ? ' step="any" inputmode="decimal"' : ""}${opts ? " " + opts : ""}>`;
+    return `<label class="${type === "a" ? "wide" : ""}"><span>${label}</span>${ctl}</label>`;
+  }
+  const yn = (b) => (b ? "✓" : "–");
+  function aptInfo(a) {
+    if (!a) return "";
+    return `<details class="info"><summary>ⓘ ${esc(a.name)} – LAT airport info</summary>
+      <table class="appr"><tr><th>Solo</th><th>Dual</th><th>Day VFR</th><th>Day IFR</th><th>Night VFR</th><th>Night IFR</th></tr>
+      <tr>${["solo", "dual", "dayVfr", "dayIfr", "nightVfr", "nightIfr"].map((k) => `<td class="${a[k] ? "y" : "n"}">${yn(a[k])}</td>`).join("")}</tr></table>
+      <p>Field elevation ${Math.round(a.elev)} ft (FAA)${a.dist ? ` · ${a.dist} NM from GYR` : ""}</p>
+      <ul>${a.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
+      <p class="fine">THB Appendix A, 07 APR 2026. Refer to the FAA Chart Supplement.</p></details>`;
+  }
+  function routeHTML() {
+    const n = nStops();
+    let h = "";
+    for (let i = 0; i < n; i++) {
+      if (i) h += '<span class="arr">→</span>';
+      h += `<span class="stop"><input id="R${i}" data-k="R${i}" list="latlist" placeholder="ICAO" autocomplete="off" spellcheck="false">${n > 1 ? `<button type="button" class="x" data-del="${i}" title="Remove stop" aria-label="Remove stop ${i + 1}">×</button>` : ""}</span>`;
+    }
+    return h + '<button type="button" id="addStop">+ stop</button>';
+  }
+  function legHTML(i) {
+    const p = (k) => lk(i, k),
+      to = stop(i + 1) || stop(i);
+    const head =
+      i === 0
+        ? control(p("time"), "Departure time (local)", "h")
+        : control(p("gnd"), `Ground time at ${esc(stop(i)) || "stop"} (min)`, "n") +
+          control(p("refuel"), "Refuel to (USG, blank = no)", "n");
+    return `<section class="leg" data-leg="${i}">
+      <div class="lhead"><b>Leg ${i + 1} · ${esc(stop(i)) || "?"} → ${esc(to) || "?"}</b><span class="lsum" id="sum${i}"></span></div>
+      <div class="fg">${head}${control(p("dur"), "Flight time (min)", "n")}${control(p("trip"), "Trip fuel (USG)", "n")}</div>
+      <div class="lrow"><span class="chips" id="chips${i}"></span><button type="button" class="fbtn" data-leg="${i}" title="Fetch airport & weather for this leg">↻</button></div>
+      <div class="fstat" id="fstat${i}"></div>
+      <select class="rsel" id="rsel${i}" hidden aria-label="Runway"></select>
+      <ul class="lwarn" id="lwarn${i}"></ul>
+      ${aptInfo(LAT.find(stop(i)))}
+      <details class="rw"><summary>Runway, weather &amp; emergency landing</summary><div class="fg">${RWYWX.map(([k, l, t, o]) => control(p(k), l, t, o)).join("")}</div></details>
+    </section>`;
+  }
+  const noserver = /[?&]noserver/.test(location.search);
+  if (noserver) document.body.classList.add("noserver");
+  $("#flight").innerHTML = `
+    <div class="fg">
+      ${control("date", "Date", "d")}
+      ${control("reg", "A/C registration", "t", 'list="reglist" autocomplete="off" spellcheck="false"')}
+      <div class="wide bemnote" id="bemNote"></div>
+      <div class="wide"><span class="lbl">Route (one T/O data sheet per takeoff)</span><div class="route" id="route"></div></div>
+      ${control("w1", "Seat 1 / pilot (lb)", "n")}${control("w2", "Seat 2 (lb)", "n")}
+      ${control("w3", "Seat 3 (lb)", "n")}${control("w4", "Seat 4 (lb)", "n")}
+      ${control("bag", "Baggage (lb)", "n")}${control("fuelTO", "Take-off fuel (USG)", "n")}
+      <div class="wide quick"><span>After 1.5 USG taxi:</span><button type="button" data-fuel="54.5">56 → 54.5</button><button type="button" data-fuel="38.5">40 → 38.5</button></div>
+      <button type="button" class="wide gobtn" id="go">Fetch airports &amp; weather</button>
+    </div>
+    <details class="more"><summary>More: BEM, flight no., prepared by</summary><div class="fg">
+      ${control("bem", "Basic empty mass (lb)", "n")}${control("bemCg", "BEM CG (in)", "n")}
+      ${control("flight", "Flight", "t")}${control("prep", "Prepared by", "t")}
+      ${control("vrbWorst", "Variable wind: assume worst case (full tailwind + crosswind)", "c")}
+    </div></details>`;
+  $("#lists").innerHTML =
+    `<datalist id="latlist">${Object.values(LAT)
+      .map((a) => `<option value="${a.icao}">${esc(a.name)} · ${a.solo ? "solo" : "dual only"}</option>`)
+      .join("")}</datalist>` +
+    `<datalist id="reglist">${Object.entries(window.FLEET || {})
+      .map(([r, f]) => `<option value="${r}">BEM ${f.bem} lb · CG ${f.cg}</option>`)
+      .join("")}</datalist>`;
+
+  function fill(root) {
+    root.querySelectorAll("[data-k]").forEach((el) => {
+      const k = el.dataset.k,
+        m = /^L(\d+)\.(.+)$/.exec(k);
+      const v = m ? lg(+m[1], m[2]) : state[k];
       if (v === undefined) return;
       if (el.type === "checkbox") el.checked = !!v;
       else el.value = v;
     });
   }
-  function readAll() {
-    const s = {};
-    els.forEach((el) => {
-      s[el.dataset.k] = el.type === "checkbox" ? el.checked : el.value;
-    });
-    return s;
+  function renderRoute() {
+    $("#route").innerHTML = routeHTML();
+    fill($("#route"));
   }
-  const num = (v) =>
-    v === "" || v === undefined || v === null ? NaN : parseFloat(v);
-  const fin = P.isNum;
-  setAll(Object.assign({}, DEFAULTS, lsGet(KEY) || {}));
+  function renderLegs() {
+    let h = "";
+    for (let i = 0; i < nLegs(); i++) h += legHTML(i);
+    $("#legs").innerHTML = h;
+    fill($("#legs"));
+    if (noserver) $("#legs").querySelectorAll("details.rw").forEach((d) => (d.open = true));
+  }
+  fill($("#flight"));
+  renderRoute();
+  renderLegs();
 
   /* ---------- formatting ---------- */
   const r0 = (v) => (fin(v) ? String(Math.round(v)) : "");
   const r10 = (v) => (fin(v) ? String(Math.ceil(v / 10 - 1e-9) * 10) : "");
   const r1 = (v) => (fin(v) ? v.toFixed(1) : "");
-  const pad = (s) => (s === "" ? "&nbsp;" : s);
   const isCalm = (d, s) => (!fin(d) && !fin(s)) || s === 0; // nothing entered, or 0 kt
   function windStr(d, s, g) {
     if (isCalm(d, s)) return "CALM";
@@ -261,18 +270,17 @@
   }
   const side = (v) => (v >= 0 ? "R" : "L");
 
-  /* ---------- main render ---------- */
-  function legData(s, p, L) {
-    const g = (k) => s[p + "." + k];
+  /* ---------- one takeoff: performance + emergency return landing ---------- */
+  // The landing box on the form is the emergency return: same airport, runway and weather, at T/O weight.
+  function legData(i, legTow) {
+    const g = (k) => lg(i, k);
     const n = (k) => num(g(k));
-    const oat = n("oat"),
-      qnh = n("qnh");
-    const tow = fin(n("tow")) ? n("tow") : L.tom;
+    const tow = fin(n("tow")) ? n("tow") : legTow;
     const common = {
-      vrbWorst: s.vrbWorst,
+      vrbWorst: state.vrbWorst,
       elev: n("elev"),
-      qnh,
-      oat,
+      qnh: n("qnh"),
+      oat: n("oat"),
       wdir: n("wdir"),
       wspd: n("wspd"),
       wgust: n("wgust"),
@@ -282,34 +290,22 @@
       surf: g("surf"),
     };
     const t = P.takeoff(Object.assign({ tow, ac: g("ac") }, common));
-    const ldw = fin(n("ldw")) ? n("ldw") : L.lm;
-    const flaps = parseInt(g("l_flaps"), 10);
-    const l = P.landing({
-      vrbWorst: s.vrbWorst,
-      elev: n("l_elev"),
-      qnh: n("l_qnh"),
-      oat: n("l_oat"),
-      wdir: n("l_wdir"),
-      wspd: n("l_wspd"),
-      wgust: n("l_wgust"),
-      hdg: n("l_hdg"),
-      len: n("l_len"),
-      slope: n("l_slope"),
-      surf: g("l_surf"),
-      flaps,
-      w: ldw,
-    });
+    const ldw = fin(n("ewt")) ? n("ewt") : tow;
+    const flaps = parseInt(g("eflaps"), 10);
+    const l = P.landing(Object.assign({ flaps, w: ldw }, common));
+    const apt = stop(i),
+      rwy = String(g("rwy") || "").trim();
     return {
       t,
       l,
       ldw,
       lflaps: flaps,
-      llen: n("l_len"),
-      lapt: [g("l_apt").trim(), g("l_rwy").trim()].filter(Boolean).join(" "),
-      dateac: [fmtDate(s.date), s.reg].filter(Boolean).join(" / "),
-      apt: g("apt"),
+      llen: n("len"),
+      lapt: [apt, rwy].filter(Boolean).join(" "),
+      dateac: [fmtDate(state.date), state.reg].filter(Boolean).join(" / "),
+      apt,
       elev: g("elev") === "" ? "" : Math.round(n("elev")) + " ft",
-      rwy: g("rwy"),
+      rwy,
       len: g("len") === "" ? "" : Math.round(n("len")) + " ft",
       lenN: n("len"),
       tow,
@@ -318,8 +314,8 @@
       wdir: n("wdir"),
       wspd: n("wspd"),
       wgust: n("wgust"),
-      qnh,
-      oat,
+      qnh: n("qnh"),
+      oat: n("oat"),
     };
   }
 
@@ -589,17 +585,22 @@
     return m ? `${m[3]} ${MON[+m[2] - 1]} ${m[1].slice(2)}` : d || "";
   }
 
+  // ceil(n/2) copies of the T/O page (two sheets each), then the load sheet.
   async function buildPdf(s, L, sheets, occ) {
     const bin = atob(window.FORM_PDF_B64);
     const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
     const doc = await PDFDocument.load(bytes);
     const font = await doc.embedFont(StandardFonts.Helvetica),
       bold = await doc.embedFont(StandardFonts.HelveticaBold);
-    const [p1, p2] = doc.getPages();
+    const toPages = [doc.getPage(0)];
+    for (let k = 1; k < Math.ceil(sheets.length / 2); k++) {
+      const [copy] = await doc.copyPages(doc, [0]);
+      toPages.push(doc.insertPage(k, copy));
+    }
     sheets.forEach((S, i) =>
-      drawSheet({ page: p1, font, bold }, i ? DY2 : 0, S, occ),
+      drawSheet({ page: toPages[i >> 1], font, bold }, i % 2 ? DY2 : 0, S, occ),
     );
-    drawLoad({ page: p2, font, bold }, s, L);
+    drawLoad({ page: doc.getPage(toPages.length), font, bold }, s, L);
     return doc.save();
   }
 
@@ -634,13 +635,24 @@
     host.replaceChildren(...canvases);
   }
 
+  const li = (x) => `<li>${esc(x)}</li>`;
   function update() {
-    const s = readAll();
-    const keep = Object.assign({}, s);
-    ["date", "a.time", "a.l_time", "b.time", "b.l_time"].forEach(
-      (k) => delete keep[k],
-    ); // never carry yesterday's date/times over
-    lsSet(KEY, keep);
+    save();
+    const s = state;
+    const legsIn = [];
+    for (let i = 0; i < nLegs(); i++)
+      legsIn.push({ trip: num(lg(i, "trip")), refuel: num(lg(i, "refuel")) });
+    const L0 = P.loadSheet({
+      bem: num(s.bem),
+      bemMom: (num(s.bem) * num(s.bemCg)) / 1000,
+      w1: num(s.w1),
+      w2: num(s.w2),
+      w3: num(s.w3),
+      w4: num(s.w4),
+      bag: num(s.bag),
+      fuelTO: num(s.fuelTO),
+    });
+    const LW = P.legWeights(L0.zfm, num(s.fuelTO), legsIn);
     const L = P.loadSheet({
       bem: num(s.bem),
       bemMom: (num(s.bem) * num(s.bemCg)) / 1000,
@@ -650,29 +662,55 @@
       w4: num(s.w4),
       bag: num(s.bag),
       fuelTO: num(s.fuelTO),
-      fuelTrip: num(s.fuelTrip),
+      fuelTrip: LW.loadTrip,
     });
     const occ = [s.w1, s.w2, s.w3, s.w4].filter((v) => num(v) > 0).length;
-    const sheets = [legData(s, "a", L)];
-    if (s["b.on"]) sheets.push(legData(s, "b", L));
+    const sheets = [];
     const warns = [];
     if (!fin(num(s.bem)) || !fin(num(s.bemCg)))
-      warns.push(
-        "Enter basic empty mass and CG from the aircraft weight report.",
-      );
+      warns.push("Enter basic empty mass and CG from the aircraft weight report.");
     L.warn.forEach((x) => warns.push(x));
-    sheets.forEach((S, i) =>
-      [...S.t.warn, ...S.l.warn].forEach((x) =>
-        warns.push(`Sheet ${i + 1}: ${x}`),
-      ),
-    );
+    LW.warn.forEach((x) => warns.push(x));
+    for (let i = 0; i < nLegs(); i++) {
+      const S = legData(i, LW.legs[i].tow);
+      sheets.push(S);
+      const apt = LAT.find(S.apt);
+      const legW = [...S.t.warn, ...S.l.warn.map((x) => "Emergency landing: " + x)];
+      if (S.apt && !apt) legW.push(`${S.apt} is not on the LAT approved airport list`);
+      legW.push(
+        ...W.latChecks(apt, { rwy: S.rwy, tow: S.tow, oat: S.oat, head: S.t.wind ? S.t.head : 0 }),
+      );
+      legW.forEach((x) => warns.push(`Leg ${i + 1}: ${x}`));
+      const lw = document.getElementById("lwarn" + i);
+      if (lw)
+        lw.innerHTML =
+          legW.map(li).join("") +
+          (apt && apt.lim.hi ? li("High field: AC off till 1000 ft AGL, lean, static T/O only.") : "");
+      const sum = document.getElementById("sum" + i);
+      const ok = fin(S.t.tod) && fin(S.lenN) ? S.t.tod <= S.lenN && S.l.tot <= S.lenN : null;
+      if (sum)
+        sum.innerHTML = fin(S.t.tor)
+          ? `<span class="${ok === false ? "bad" : ok ? "good" : ""}">${S.rwy ? "RWY " + esc(S.rwy) + " · " : ""}TOD ${r10(S.t.tod)}${fin(S.lenN) ? " / " + Math.round(S.lenN) : ""} ft ${ok === false ? "⚠" : ok ? "✓" : ""}</span>`
+          : "";
+      const chips = document.getElementById("chips" + i);
+      if (chips)
+        chips.innerHTML = [
+          fin(S.tow) && `TOW ${r0(S.tow)} lb`,
+          `Wind ${windStr(S.wdir, S.wspd, S.wgust)}`,
+          fin(S.oat) && `${S.oat} °C`,
+          fin(S.qnh) && `QNH ${qnhStr(S.qnh)}`,
+          S.elev && `Elev ${S.elev}`,
+          fin(S.l.tot) && `Emerg. LDG ${r10(S.l.tot)} ft`,
+        ]
+          .filter(Boolean)
+          .map((x) => `<span>${esc(x)}</span>`)
+          .join("");
+    }
     $("#warn").innerHTML = warns.length
-      ? "<b>Check:</b><ul>" +
-        warns.map((x) => `<li>${esc(x)}</li>`).join("") +
-        "</ul>"
+      ? "<b>Check:</b><ul>" + warns.map(li).join("") + "</ul>"
       : '<span class="ok">All values within limits.</span>';
     $("#sum").textContent = fin(L.tom)
-      ? `ZFM ${Math.round(L.zfm)} lb · TOM ${Math.round(L.tom)} lb · LM ${Math.round(L.lm)} lb`
+      ? `ZFM ${Math.round(L.zfm)} · TOM ${Math.round(L.tom)} · LM ${Math.round(L.lm)} lb`
       : "";
     buildPdf(s, L, sheets, occ)
       .then((b) => {
@@ -696,32 +734,45 @@
       o = (lsGet(BEMKEY) || {})[r];
     const n = $("#bemNote");
     n.innerHTML = o
-      ? `Manual override for ${esc(r)}.` +
+      ? `BEM ${esc(o.bem)} lb · CG ${esc(o.cg)} – manual override for ${esc(r)}.` +
         (f ? ' <button type="button" id="bemRestore">Restore fleet values</button>' : "")
       : f
-        ? `Fleet data for ${esc(r)} (editable).`
-        : "";
+        ? `BEM ${f.bem} lb · CG ${f.cg} in from fleet data (edit under "More").`
+        : r
+          ? "Not in the fleet table – enter BEM and CG under “More”."
+          : "";
+  }
+  function setState(k, v) {
+    state[k] = v;
+    const el = document.getElementById(k);
+    if (el) {
+      if (el.type === "checkbox") el.checked = !!v;
+      else el.value = v;
+    }
   }
   function applyBem(r) {
     const v = (lsGet(BEMKEY) || {})[r] || fleetOf(r);
     if (v) {
-      $("#bem").value = v.bem;
-      $("#bemCg").value = v.cg;
+      setState("bem", v.bem);
+      setState("bemCg", v.cg);
     }
     bemNote(r);
   }
-  const regVal = () => $("#reg").value.trim().toUpperCase();
+  const regVal = () => String(state.reg || "").trim().toUpperCase();
   applyBem(regVal());
+
   document.addEventListener("input", (e) => {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
-    if (el.dataset.k === "reg") applyBem(regVal());
-    else if (el.dataset.k === "bem" || el.dataset.k === "bemCg") {
+    const k = el.dataset.k;
+    state[k] = el.type === "checkbox" ? el.checked : el.value;
+    if (k === "reg") applyBem(regVal());
+    else if (k === "bem" || k === "bemCg") {
       const r = regVal();
       if (r) {
         const map = lsGet(BEMKEY) || {},
           f = fleetOf(r),
-          cur = { bem: $("#bem").value, cg: $("#bemCg").value };
+          cur = { bem: state.bem, cg: state.bemCg };
         if (f && num(cur.bem) === f.bem && num(cur.cg) === f.cg) delete map[r];
         else map[r] = cur;
         lsSet(BEMKEY, map);
@@ -730,41 +781,97 @@
     }
     schedule();
   });
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest("#bemRestore")) return;
-    const map = lsGet(BEMKEY) || {},
-      r = regVal();
-    delete map[r];
-    lsSet(BEMKEY, map);
-    applyBem(r);
+  // Route edits rebuild the leg cards (on change, so typing a code does not re-render under the cursor).
+  document.addEventListener("change", (e) => {
+    const el = e.target;
+    if (!el.dataset || !/^R\d+$/.test(el.dataset.k || "")) return;
+    el.value = state[el.dataset.k] = el.value.trim().toUpperCase();
+    renderLegs();
     schedule();
+  });
+  document.addEventListener("click", (e) => {
+    const t = e.target;
+    if (t.closest("#addStop")) {
+      const n = nStops();
+      setState("R" + n, "");
+      state.nR = n + 1;
+      renderRoute();
+      renderLegs();
+      document.getElementById("R" + n).focus();
+      schedule();
+      return;
+    }
+    const del = t.closest("[data-del]");
+    if (del) {
+      const d = +del.dataset.del,
+        n = nStops();
+      for (let i = d; i < n - 1; i++) state["R" + i] = state["R" + (i + 1)];
+      delete state["R" + (n - 1)];
+      state.nR = n - 1;
+      // the takeoff from the removed stop disappears; later takeoffs move up one
+      const moved = {};
+      Object.keys(state)
+        .filter((k) => /^L\d+\./.test(k))
+        .forEach((k) => {
+          const [, i, f] = /^L(\d+)\.(.+)$/.exec(k);
+          if (+i !== d) moved[`L${+i > d ? +i - 1 : +i}.${f}`] = state[k];
+          delete state[k];
+        });
+      Object.assign(state, moved);
+      renderRoute();
+      renderLegs();
+      schedule();
+      return;
+    }
+    if (t.closest("#bemRestore")) {
+      const map = lsGet(BEMKEY) || {},
+        r = regVal();
+      delete map[r];
+      lsSet(BEMKEY, map);
+      applyBem(r);
+      schedule();
+      return;
+    }
+    const fb = t.closest("[data-fuel]");
+    if (fb) {
+      setState("fuelTO", fb.dataset.fuel);
+      schedule();
+    }
   });
   window.addEventListener("resize", schedule);
   function blobUrl() {
-    return URL.createObjectURL(
-      new Blob([lastBytes], { type: "application/pdf" }),
-    );
+    return URL.createObjectURL(new Blob([lastBytes], { type: "application/pdf" }));
   }
   $("#download").addEventListener("click", () => {
     if (!lastBytes) return;
     const a = document.createElement("a");
     a.href = blobUrl();
-    a.download = `SR20_TO_LoadSheet_${($("#reg").value || "flight").replace(/\W+/g, "")}_${$("#date").value || ""}.pdf`;
+    a.download = `SR20_TO_LoadSheet_${String(state.reg || "flight").replace(/\W+/g, "")}_${state.date || ""}.pdf`;
     a.click();
   });
   $("#print").addEventListener("click", () => {
     if (lastBytes) window.open(blobUrl(), "_blank");
   });
-  document.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-fuel]");
-    if (!b) return;
-    const f = $("#fuelTO");
-    f.value = b.dataset.fuel;
-    f.dispatchEvent(new Event("input", { bubbles: true }));
-  });
   $("#reset").addEventListener("click", () => {
-    setAll(DEFAULTS);
+    Object.keys(state).forEach((k) => delete state[k]);
+    Object.assign(state, DEFAULTS, { date: today() });
+    fill($("#flight"));
+    renderRoute();
+    renderLegs();
+    applyBem(regVal());
     update();
   });
+
+  // For autofill.js: read/write state through the form so the UI and the PDF stay in sync.
+  window.App = {
+    nLegs,
+    stop,
+    get: (k) => state[k],
+    leg: lg,
+    set: (k, v) => {
+      setState(k, v);
+      schedule();
+    },
+  };
   update();
 })();
