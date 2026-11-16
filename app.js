@@ -189,13 +189,8 @@
     ) +
     section("Sheet 2 – landing", grid("b", LDF, "b."));
 
-  // Weather/airport autofill needs the local relay (node server.js). Elsewhere (e.g. GitHub Pages) hide it
-  // and show the manual inputs instead.
-  if (
-    !/^(localhost|127\.0\.0\.1)$/.test(location.hostname) ||
-    /[?&]noserver/.test(location.search)
-  ) {
-    // ?noserver previews the hosted view
+  // ?noserver hides the weather autofill and shows the manual inputs instead.
+  if (/[?&]noserver/.test(location.search)) {
     document.body.classList.add("noserver");
     ["a.time", "dur", "a.l_time", "b.time", "b.l_time"].forEach((id) => {
       const e = document.getElementById(id);
