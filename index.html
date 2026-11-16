@@ -27,6 +27,7 @@ summary{padding:8px 12px;cursor:pointer;font-weight:600}
 input[type=text],input[type=number],input[type=date],select,textarea{font:inherit;padding:5px 6px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--fg);width:100%}
 input[type=time]{font:inherit;padding:5px 6px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--fg);width:100%}
 body.noserver .wx,body.noserver .fetchall,body.noserver .fetch{display:none!important}
+.bemnote{font-size:11px;opacity:.85}.bemnote:empty{display:none}.bemnote button{padding:1px 8px;font-size:11px}
 .fetchall{display:flex;flex-direction:column;gap:8px}.gobtn{padding:9px;background:var(--acc);color:#fff;border-color:var(--acc);font-weight:600}.gobtn:disabled{opacity:.5}.rl{font-size:12px}
 .fetch{display:flex;flex-direction:column;gap:6px}.fstat{font-size:11px;white-space:pre-wrap;opacity:.85}.fstat .err{color:#c0392b}
 button[data-fuel]{padding:3px 8px;font-size:12px}.quick{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px}
@@ -47,7 +48,7 @@ button[data-fuel]{padding:3px 8px;font-size:12px}.quick{display:flex;flex-wrap:w
   <div id="left">
     <div id="warn"></div>
     <div id="inputs"></div>
-    <p style="font-size:11px;opacity:.75;margin:4px 2px"><b>Training aid only.</b> Verify every value against the THB, the POH and your aircraft's weight report before flight. The form is prefilled with example values (BEM, CG, weights): replace them. Written onto LAT form 1002; tables from THB SR20 Rev 06, linear interpolation (takeoff and landing distances use the next higher table weight).</p>
+    <p style="font-size:11px;opacity:.75;margin:4px 2px"><b>Training aid only.</b> Verify every value against the THB, the POH and your aircraft's weight report before flight. BEM and CG autofill from the fleet table by registration (you can override them); other values are examples: replace them. Written onto LAT form 1002; tables from THB SR20 Rev 06, linear interpolation (takeoff and landing distances use the next higher table weight).</p>
   </div>
   <div id="pages"></div>
 </div>
@@ -55,6 +56,7 @@ button[data-fuel]{padding:3px 8px;font-size:12px}.quick{display:flex;flex-wrap:w
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/pdf.worker.min.js"></script>
 <script src="form1002.js"></script>
+<script src="fleet.js"></script>
 <script src="perf.js"></script>
 <script src="app.js"></script>
 <script src="wx.js"></script>

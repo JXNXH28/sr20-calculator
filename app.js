@@ -27,6 +27,7 @@
     ["fuelTrip", "Trip fuel (USG)", "n"],
     ["bem", "Basic empty mass (lb)", "n"],
     ["bemCg", "BEM CG (in)", "n"],
+    ["bemNote", "", "i"],
     ["go", "", "g"],
   ];
   const GENERAL = [
@@ -159,6 +160,8 @@
       return `<div class="wide fetch" data-p="${id.split(".")[0]}." data-land="${id.includes("l_") ? 1 : 0}"><button type="button" class="fbtn">Fetch airport &amp; weather</button><select class="rsel" hidden></select><div class="fstat"></div></div>`;
     if (type === "g")
       return '<div class="wide fetchall"><button type="button" class="gobtn">Fetch airports &amp; weather</button><div class="fetch" data-p="a." data-land="0"><span class="rl">Departure runway</span><select class="rsel" hidden></select><div class="fstat"></div></div><div class="fetch" data-p="a." data-land="1"><span class="rl">Landing runway</span><select class="rsel" hidden></select><div class="fstat"></div></div></div>';
+    if (type === "i")
+      return '<div class="wide bemnote" id="bemNote"></div>';
     if (type === "q")
       return '<div class="wide quick"><span>Take-off fuel (after 1.5 USG taxi):</span><button type="button" data-fuel="54.5">56 USG → 54.5</button><button type="button" data-fuel="38.5">40 USG → 38.5</button></div>';
     if (type === "c")
@@ -686,25 +689,54 @@
     timer = setTimeout(update, 120);
   };
 
-  let lastReg = null;
+  // BEM / CG: fleet table (fleet.js) prefills by registration; anything typed is kept as a per-registration override.
+  const fleetOf = (r) => (window.FLEET || {})[r];
+  function bemNote(r) {
+    const f = fleetOf(r),
+      o = (lsGet(BEMKEY) || {})[r];
+    const n = $("#bemNote");
+    n.innerHTML = o
+      ? `Manual override for ${esc(r)}.` +
+        (f ? ' <button type="button" id="bemRestore">Restore fleet values</button>' : "")
+      : f
+        ? `Fleet data for ${esc(r)} (editable).`
+        : "";
+  }
+  function applyBem(r) {
+    const v = (lsGet(BEMKEY) || {})[r] || fleetOf(r);
+    if (v) {
+      $("#bem").value = v.bem;
+      $("#bemCg").value = v.cg;
+    }
+    bemNote(r);
+  }
+  const regVal = () => $("#reg").value.trim().toUpperCase();
+  applyBem(regVal());
   document.addEventListener("input", (e) => {
     const el = e.target;
     if (!el.dataset || !el.dataset.k) return;
-    const map = lsGet(BEMKEY) || {};
-    if (el.dataset.k === "reg") {
-      const r = el.value.trim().toUpperCase();
-      if (r && map[r] && r !== lastReg) {
-        $("#bem").value = map[r].bem;
-        if (map[r].cg !== undefined) $("#bemCg").value = map[r].cg;
-      }
-      lastReg = r;
-    } else if (el.dataset.k === "bem" || el.dataset.k === "bemCg") {
-      const r = $("#reg").value.trim().toUpperCase();
+    if (el.dataset.k === "reg") applyBem(regVal());
+    else if (el.dataset.k === "bem" || el.dataset.k === "bemCg") {
+      const r = regVal();
       if (r) {
-        map[r] = { bem: $("#bem").value, cg: $("#bemCg").value };
+        const map = lsGet(BEMKEY) || {},
+          f = fleetOf(r),
+          cur = { bem: $("#bem").value, cg: $("#bemCg").value };
+        if (f && num(cur.bem) === f.bem && num(cur.cg) === f.cg) delete map[r];
+        else map[r] = cur;
         lsSet(BEMKEY, map);
+        bemNote(r);
       }
     }
+    schedule();
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#bemRestore")) return;
+    const map = lsGet(BEMKEY) || {},
+      r = regVal();
+    delete map[r];
+    lsSet(BEMKEY, map);
+    applyBem(r);
     schedule();
   });
   window.addEventListener("resize", schedule);
