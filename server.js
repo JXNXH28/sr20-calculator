@@ -11,17 +11,20 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json; charset=utf-8' };
 const relay = require('./api/aw/[ep].js');
 const config = require('./api/config.js');
+const invite = require('./api/admin/invite.js');
 const { verifyJwt, tokenFromRequest, accessDecision } = require('./lib/verify.js');
 
 http.createServer(async (req, res) => {
-  if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
   const url = new URL(req.url, 'http://localhost');
+  const isInvite = req.method === 'POST' && url.pathname === '/api/admin/invite';
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !isInvite) { res.writeHead(405); return res.end(); }
   const token = tokenFromRequest(req.headers);
   const authed = token ? !!(await verifyJwt(token, process.env.SUPABASE_URL)) : false;
   const d = accessDecision(url.pathname, url.search, authed);
   if (d.action === 'redirect') { res.writeHead(302, { Location: d.location }); return res.end(); }
   if (d.action === 'json401') { res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' }); return res.end('{"error":"unauthenticated"}'); }
   if (d.action === 'deny') { res.writeHead(401); return res.end('unauthenticated'); }
+  if (isInvite) return invite(req, res);
   if (url.pathname === '/api/config' || url.pathname === '/api/config.js') return config(req, res);
   if (url.pathname.startsWith('/api/aw/')) return relay(req, res);
   let rel;

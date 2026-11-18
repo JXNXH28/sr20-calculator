@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SR20 Admin</title>
+<style>
+:root{--bg:#eef1f5;--fg:#16202c;--card:#fff;--line:#c9d1db;--acc:#14305e;--err:#c0392b;--ok:#2e8b57}
+@media (prefers-color-scheme:dark){:root{--bg:#161a20;--fg:#e6ebf1;--card:#212832;--line:#38424f;--acc:#7fa6e6}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.35 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+header{display:flex;gap:10px;align-items:center;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:16px;margin:0;color:var(--acc)}
+h2{font-size:14px;margin:0 0 10px}
+header .sp{flex:1}
+a{color:var(--acc)}
+main{max-width:1200px;margin:0 auto;padding:12px 16px;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+input,select{font:inherit;font-size:16px;padding:6px 7px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--fg);min-width:0}
+button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+@media (prefers-color-scheme:dark){button.pri{color:#111}}
+button.sm{padding:2px 8px;font-size:12px}
+button:disabled{opacity:.6;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.row label{display:flex;flex-direction:column;gap:2px;font-size:12px}
+.tabs{display:flex;gap:6px}
+.tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+@media (prefers-color-scheme:dark){.tabs button.on{color:#111}}
+#status{border-radius:6px;padding:8px 10px;font-size:13px;border:1px solid var(--line);background:var(--card)}
+#status.err{border-color:var(--err)}#status.ok{border-color:var(--ok)}
+.wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}
+th,td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{position:sticky;top:0;background:var(--card)}
+th.s{cursor:pointer;user-select:none}
+td.n,th.n{text-align:right}
+tfoot td{font-weight:600}
+tr.off td{opacity:.55}
+.bar{display:inline-block;height:8px;background:var(--acc);border-radius:2px;vertical-align:middle;margin-left:6px;opacity:.7}
+.acts{display:flex;gap:4px;flex-wrap:wrap}
+.adj{display:flex;gap:4px;flex-wrap:wrap;padding:6px 0;align-items:center}
+.adj input{width:90px;font-size:14px}.adj input.note{width:200px}
+.pos{color:var(--ok)}.neg{color:var(--err)}
+.kv th{width:1%;font-weight:600}
+.grp{font-weight:600;background:var(--bg)}
+.muted{opacity:.7}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="app" hidden>
+<header>
+  <h1>SR20 · Admin</h1>
+  <a href="/">Calculator</a>
+  <span class="sp"></span>
+  <span id="who"></span>
+  <button id="signout" type="button">Sign out</button>
+</header>
+<main>
+  <div id="status" role="status" hidden></div>
+  <div class="tabs">
+    <button type="button" data-tab="usage" class="on">Usage</button>
+    <button type="button" data-tab="log">Calculation log</button>
+    <button type="button" data-tab="invite">Invite user</button>
+  </div>
+
+  <section id="tab-usage" class="card">
+    <div class="row">
+      <label>Period
+        <select id="period">
+          <option value="week">This week</option>
+          <option value="month" selected>This month</option>
+          <option value="30d">Last 30 days</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+      <label class="cust" hidden>From<input type="date" id="pFrom"></label>
+      <label class="cust" hidden>To (inclusive)<input type="date" id="pTo"></label>
+      <button type="button" id="reload">Reload</button>
+    </div>
+    <p class="muted" id="periodLabel"></p>
+    <div class="wrap"><table id="usageTbl"></table></div>
+    <div id="detail" hidden style="margin-top:12px"></div>
+  </section>
+
+  <section id="tab-log" class="card" hidden>
+    <div class="row">
+      <label>User<select id="lUser"><option value="">All users</option></select></label>
+      <label>From<input type="date" id="lFrom"></label>
+      <label>To (inclusive)<input type="date" id="lTo"></label>
+      <label>Route contains<input type="text" id="lRoute" size="10"></label>
+      <label>Reg<input type="text" id="lReg" size="8"></label>
+      <button type="button" id="lGo" class="pri">Search</button>
+    </div>
+    <div class="wrap" style="margin-top:10px"><table id="logTbl"></table></div>
+    <div id="logInputs" hidden style="margin-top:12px"></div>
+  </section>
+
+  <section id="tab-invite" class="card" hidden>
+    <h2>Invite user</h2>
+    <form id="fInvite" class="row">
+      <label>Email<input type="email" id="iEmail" required autocomplete="off"></label>
+      <label>Name<input type="text" id="iName" maxlength="100" autocomplete="off"></label>
+      <label>Initial tokens<input type="number" id="iTokens" min="0" max="1000" step="1" value="0" style="width:110px"></label>
+      <button type="submit" class="pri">Send invite</button>
+    </form>
+  </section>
+</main>
+</div>
+<script src="/api/config.js"></script>
+<script src="/auth.js"></script>
+<script src="/admin.js"></script>
+</body>
+</html>
