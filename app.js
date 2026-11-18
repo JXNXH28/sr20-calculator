@@ -1298,7 +1298,8 @@
   async function useCalc(id, asResult) {
     let row;
     try {
-      row = (await Auth.rest(`/calculations?id=eq.${id}&select=id,created_at,inputs`))[0];
+      // own calculations only (admins could read everyone's; that view lives in admin.html)
+      row = (await Auth.rest(`/calculations?id=eq.${encodeURIComponent(id)}&user_id=eq.${profile.id}&select=id,created_at,inputs`))[0];
     } catch (e) {
       return toast("Could not load that calculation: " + String((e && e.message) || e));
     }
@@ -1319,7 +1320,7 @@
       <div class="btns"><button type="button" data-v="close">Close</button></div>`,
       async (d) => {
         try {
-          const rows = await Auth.rest("/calculations?select=id,created_at,flight_date,dep_time,route,reg&order=created_at.desc&limit=50");
+          const rows = await Auth.rest(`/calculations?user_id=eq.${profile.id}&select=id,created_at,flight_date,dep_time,route,reg&order=created_at.desc&limit=50`);
           if (!rows || !rows.length) return body(d, "<p>No calculations yet. Each calculation you run is listed here.</p>");
           body(
             d,
