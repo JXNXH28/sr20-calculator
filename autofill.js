@@ -4,6 +4,8 @@
 // fields aviationweather does not know), Open-Meteo (forecast model). Which source answers for a time: wx.js.
 (function () {
 'use strict';
+// app.js starts after sign-in and then announces window.App with an "app-ready" event
+function boot() {
 const W = window.Wx, A = window.App, LAT = window.LAT_AIRPORTS;
 if (A.noserver) return;
 const offline = location.protocol === 'file:';
@@ -177,6 +179,7 @@ let plan = 0;
 async function check(force) {
   const my = ++plan;
   const date = A.get('date'), time = A.get('time'), pts = A.points();
+  if (A.get('mode') === 'result') return; // a calculated sheet never refetches
   if (offline || !date || !time || !pts[0] || !/^[A-Z0-9]{3,4}$/.test(pts[0].icao)) return;
   let tz;
   try { tz = (await airport(pts[0].icao)).tz || 'UTC'; } catch (e) { tz = 'UTC'; } // the run below reports the error
@@ -200,4 +203,6 @@ A.onChange = () => { clearTimeout(timer); timer = setTimeout(check, 800); };
 A.refresh = (p) => { clearTimeout(timer); check(p); };
 if (offline) A.points().forEach(({ p }) => A.setMeta(p, { info: { out: [], warn: [], err: 'Opened as a file: run `node server.js` and open http://localhost:8765 for automatic airport and weather data.' } }));
 else check();
+}
+if (window.App) boot(); else window.addEventListener('app-ready', boot, { once: true });
 })();

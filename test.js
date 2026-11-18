@@ -112,4 +112,41 @@ eq('E63 wx station', LAT.find('E63').wx[0][0] === 'KGXF' ? 1 : 0, 1, 0);
 const e63 = W.runwaysFromFaa([{ attributes: { DESIGNATOR: '04/22', LENGTH: 5200, COMP_CODE: 'ASPH' }, geometry: { rings: [[[-112.666431550359, 32.963926415666], [-112.680734322566, 32.9562486439002], [-112.680865656604, 32.9564225049171], [-112.666562868396, 32.964100291683], [-112.666431550359, 32.963926415666]]] } }], -10);
 eq('E63 rwy 04 true', e63.find((e) => e.id === '04').hdgT, 57.4, 1); eq('E63 rwy 22 true', e63.find((e) => e.id === '22').hdgT, 237.4, 1);
 eq('E63 rwy 04 magnetic', e63.find((e) => e.id === '04').hdg, 47, 1); eq('E63 length', e63[0].len, 5200, 0);
+// ---- snapshot (canonical inputs) ----
+const Sn = require('./snapshot.js');
+const fp = (s) => JSON.stringify(Sn.sortKeys(Sn.canonical(s)));
+const base = { date: '2026-11-18', time: '09:30', reg: 'n123ab', flight: 'D1_1', prep: '', bem: '2250', bemCg: 140.5, w1: '170', w2: '', bag: 18, fuelTO: '38.5', trim: 'T/O 0', vrbWorst: true, nR: 3, R0: 'kgyr', R1: 'KBXK', R2: 'KGYR',
+  'L0.oat': '31', 'L0.rwy': '21', 'L0.wdir': '240', 'L0.wspd': 12, 'L0.wgust': 18, 'L0.qnh': 29.92, 'L0.info': { out: ['Takeoff 09:30 local', 'wind: METAR 1453Z'], warn: [], err: '' }, 'L0.fkey': 'x', 'L0.fat': 1, 'L0.ends': [{ id: '21' }], 'L0.pick': '21',
+  'L1.oat': 25, 'D.oat': 20, 'D.qnh': 30, edited: { 'L0.oat': 1 }, mode: 'draft', calcId: 5 };
+const chg = (o) => Object.assign({}, base, o);
+const same = (name, a, b) => { const ok = fp(a) === fp(b); if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name); };
+const diff = (name, a, b) => { const ok = fp(a) !== fp(b); if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name); };
+const shuffled = {}; Object.keys(base).reverse().forEach((k) => { shuffled[k] = base[k]; });
+same('snapshot key order', base, shuffled);
+same('snapshot ignores bookkeeping', base, chg({ 'L0.fkey': 'y', 'L0.fat': 99, 'L0.ends': [], 'L0.pick': '03', edited: {}, mode: 'result', calcId: 9, calcAt: 'now', 'L1.fkey': 'z' }));
+same('snapshot number strings', base, chg({ bem: 2250, w1: 170, 'L0.oat': 31, 'L0.wdir': 240, 'L0.wspd': '12', fuelTO: 38.5, w2: undefined }));
+same('snapshot case and spaces', base, chg({ reg: ' N123AB ', R0: 'KGYR ', 'L0.rwy': '21 ' }));
+same('snapshot default = explicit', base, chg({ 'L0.dur': 60, 'L0.trip': '15', 'D.slope': 0, 'L0.ac': false, 'L0.surf': 'paved' }));
+diff('snapshot weight', base, chg({ w1: 171 }));
+diff('snapshot fuel', base, chg({ fuelTO: 40 }));
+diff('snapshot OAT', base, chg({ 'L0.oat': 32 }));
+diff('snapshot wind', base, chg({ 'L0.wspd': 13 }));
+diff('snapshot source', base, chg({ 'L0.info': { out: ['wind: METAR 1553Z'] } }));
+diff('snapshot trip fuel', base, chg({ 'L0.trip': 20 }));
+same('snapshot removed stop leaks nothing', chg({ nR: 2, R2: 'KGYR' }), chg({ nR: 2, R2: '', 'L1.oat': 99, 'L1.rwy': '04', 'L1.info': { out: ['wind: METAR 1'] } }));
+{
+  const two = Sn.canonical(chg({ nR: 2, 'L1.oat': 99 }));
+  const leaks = Object.keys(two).filter((k) => /^L1\./.test(k) || k === 'R2');
+  if (leaks.length) fail++; console.log((leaks.length ? 'FAIL ' : 'ok   ') + 'snapshot has no stale L1/R2 keys');
+}
+{
+  const c = Sn.canonical(base), m = Sn.meta(base);
+  const ok = m.route === 'KGYR-KBXK-KGYR' && m.reg === 'N123AB' && m.flight_date === '2026-11-18' && m.dep_time === '09:30'
+    && !('edited' in c) && !('L0.fkey' in c) && c['L0.src'] === 'wind: METAR 1453Z' && c.bem === 2250 && !('w2' in c);
+  if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + 'snapshot meta + shape ' + JSON.stringify(m));
+  const rt = fp(Sn.fromCanonical(c)) === JSON.stringify(Sn.sortKeys(c));
+  if (!rt) fail++; console.log((rt ? 'ok   ' : 'FAIL ') + 'snapshot round trip');
+  const cl = Sn.canonical(chg({ bag: '', 'L0.dur': '' })), rt2 = fp(Sn.fromCanonical(cl)) === JSON.stringify(Sn.sortKeys(cl)) && !('bag' in cl) && !('L0.dur' in cl);
+  if (!rt2) fail++; console.log((rt2 ? 'ok   ' : 'FAIL ') + 'snapshot round trip keeps cleared defaults');
+}
 console.log(fail ? fail + ' FAILED' : 'ALL PASS'); process.exit(fail ? 1 : 0);

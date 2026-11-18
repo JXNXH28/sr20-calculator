@@ -1,7 +1,23 @@
 (function () {
   "use strict";
+  // Nothing starts before sign-in: the page stays hidden (body.booting) until Auth.requireUser() resolves.
+  if (!window.Auth) {
+    document.body.classList.remove("booting");
+    document.body.innerHTML = '<p class="unavail"><b>Sign-in service unavailable</b><br>Open this page from the server (not as a file) and reload.</p>';
+    return;
+  }
+  window.Auth
+    .requireUser()
+    .then((u) => start(u.profile))
+    .catch((e) => {
+      document.body.classList.remove("booting");
+      document.body.innerHTML = `<p class="unavail"><b>Sign-in service unavailable</b><br>${String((e && e.message) || e).replace(/[<>&]/g, "")}</p>`;
+    });
+  function start(profile) {
+  const Auth = window.Auth;
   const P = window.Perf,
     W = window.Wx,
+    Snapshot = window.Snapshot,
     LAT = window.LAT_AIRPORTS;
   const $ = (s) => document.querySelector(s);
   const byId = (id) => document.getElementById(id);
@@ -52,38 +68,12 @@
   const AUTO = ["elev", "rwy", "hdg", "len", "surf", "wdir", "wspd", "wgust", "qnh", "oat", "remarks"];
   const META = ["info", "ends", "fkey", "fat", "pick"]; // fetch bookkeeping per point
   // Values that usually stay the same keep a default; everything else starts empty with a placeholder.
-  const PT_DEFAULTS = {
-    dur: 60,
-    trip: 15,
-    gnd: 30,
-    slope: 0,
-    surf: "paved",
-    eflaps: "100",
-    ac: false,
-  };
+  const PT_DEFAULTS = Snapshot.PT_DEFAULTS;
   const today = () =>
     new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
       .toISOString()
       .slice(0, 10);
-  const DEFAULTS = {
-    reg: "",
-    flight: "",
-    time: "",
-    prep: "",
-    bem: "",
-    bemCg: "",
-    w1: "",
-    w2: "",
-    w3: "",
-    w4: "",
-    bag: 18,
-    fuelTO: 38.5,
-    trim: "T/O 0",
-    vrbWorst: true,
-    nR: 2,
-    R0: "",
-    R1: "",
-  };
+  const DEFAULTS = Snapshot.DEFAULTS; // flight-level defaults; the same list decides what a calculation stores
 
   /* ---------- state (browser localStorage only, nothing leaves the device) ---------- */
   // Flat map: flight keys (date, reg, w1 …), route stops R0…R{nR-1}, point keys "L0.oat", "D.rwy", edited flags.
@@ -129,7 +119,8 @@
     state.edited = {};
   }
   // A saved flight from an earlier day: keep route, people and settings, drop its date, time and weather.
-  if (!state.date || state.date < today()) {
+  // (a calculated sheet stays as it was)
+  if (state.mode !== "result" && (!state.date || state.date < today())) {
     state.date = today();
     state.time = "";
     clearFetched();
@@ -149,6 +140,12 @@
   };
   const save = () => lsSet(KEY, state);
   const busy = {}; // point -> fetch in progress (not persisted)
+  // Draft: the form works, weather loads, no results. Result: one calculated snapshot, inputs read-only.
+  const isRes = () => state.mode === "result";
+  let pending = false; // a calculation request is on its way
+  let notice = ""; // message under the banner (calculation errors)
+  const isLocked = () => isRes() || pending;
+  const tokens = () => (profile && Number.isFinite(+profile.tokens) ? +profile.tokens : 0);
 
   /* ---------- building the input panel ---------- */
   function control(id, label, type, opts, ph) {
@@ -256,7 +253,7 @@
       <ul class="lwarn" id="lwarn-${p}"></ul>
       <div class="fg plan">${plan}</div>
       ${aptInfo(LAT.find(apt))}
-      <details class="rw"${noserver ? " open" : ""}><summary>Edit runway &amp; weather values</summary><div class="fg">${pointFields(isD)
+      <details class="rw"><summary>Edit runway &amp; weather values</summary><div class="fg">${pointFields(isD)
         .map(([f, l, t, o]) => control(k(f), l, t, o, AUTO.includes(f) ? ph : ""))
         .join("")}</div></details>
     </section>`;
@@ -276,14 +273,15 @@
     fill($("#route"));
   }
   function renderLegs() {
-    const open = new Set(
-      [...document.querySelectorAll("#legs details[open]")].map(
-        (d) => d.className + d.closest(".leg").dataset.p,
-      ),
-    );
-    $("#legs").innerHTML = points().map(pointHTML).join("");
+    const was = {};
     document.querySelectorAll("#legs details").forEach((d) => {
-      if (open.has(d.className + d.closest(".leg").dataset.p)) d.open = true;
+      was[d.className + d.closest(".leg").dataset.p] = d.open;
+    });
+    $("#legs").innerHTML = points().map(pointHTML).join("");
+    // while drafting, the runway & weather values start open so they are easy to review; later choices are kept
+    document.querySelectorAll("#legs details").forEach((d) => {
+      const id = d.className + d.closest(".leg").dataset.p;
+      d.open = was[id] !== undefined ? was[id] : d.className === "rw";
     });
     fill($("#legs"));
   }
@@ -678,7 +676,9 @@
       canvases.push(cv);
     }
     if (my !== seq) return;
+    if (!isRes()) return;
     host.replaceChildren(...canvases);
+    delete host.dataset.ph;
   }
 
   const li = (x) => `<li>${esc(x)}</li>`;
@@ -712,6 +712,7 @@
     sel.value = cur < 0 ? "" : String(cur);
   }
   function renderStatus(p, nEdited) {
+    if (isRes()) nEdited = 0;
     const info = state[`${p}.info`] || {},
       parts = [];
     if (busy[p]) parts.push('<span class="spin">Loading airport and weather…</span>');
@@ -722,16 +723,17 @@
     }
     if (nEdited)
       parts.push(
-        `<span class="note">${nEdited} value${nEdited > 1 ? "s" : ""} edited by you</span> <button type="button" data-unedit="${p}">↺ use fetched</button>`,
+        `<span class="note">${nEdited} value${nEdited > 1 ? "s" : ""} edited by you</span>${isLocked() ? "" : ` <button type="button" data-unedit="${p}">↺ use fetched</button>`}`,
       );
-    if (!noserver && validCode(aptOf(p)) && !busy[p])
+    if (!noserver && validCode(aptOf(p)) && !busy[p] && !isLocked())
       parts.push(`<button type="button" data-refresh="${p}" title="Fetch airport and weather again">↻ refresh</button>`);
     setHTML("fstat-" + p, parts.join(" · "));
   }
 
   function update() {
     save();
-    const s = state;
+    const s = state,
+      res = isRes();
     const legsIn = [];
     for (let i = 0; i < nLegs(); i++)
       legsIn.push({ trip: num(pv("L" + i, "trip")), refuel: num(pv("L" + i, "refuel")) });
@@ -787,13 +789,21 @@
       const apt = LAT.find(S.apt),
         name = isD ? "Landing" : `Leg ${idx + 1}`;
       const head = S.t.wind ? S.t.head : 0;
+      // airport-limit checks help judge the weather, so they show while drafting; performance-table warnings are results
+      const latW = [
+        ...(S.apt && validCode(S.apt) && !apt ? [`${S.apt} is not on the LAT approved airport list`] : []),
+        ...W.latChecks(apt, { rwy: S.rwy, tow: S.tow, oat: S.oat, head, landing: isD }),
+      ];
       const warn = [
-        ...new Set([
-          ...(isD ? [] : S.t.warn),
-          ...S.l.warn.map((x) => (isD ? x : "Emergency landing: " + x)),
-          ...(S.apt && validCode(S.apt) && !apt ? [`${S.apt} is not on the LAT approved airport list`] : []),
-          ...W.latChecks(apt, { rwy: S.rwy, tow: S.tow, oat: S.oat, head, landing: isD }),
-        ]),
+        ...new Set(
+          res
+            ? [
+                ...(isD ? [] : S.t.warn),
+                ...S.l.warn.map((x) => (isD ? x : "Emergency landing: " + x)),
+                ...latW,
+              ]
+            : latW,
+        ),
       ];
       if (warn.length && !firstIssue) firstIssue = `${name}: ${warn[0]}`;
       if (busy[p]) loading = true;
@@ -809,7 +819,7 @@
       const ok = fin(need) && fin(S.lenN) ? need <= S.lenN && !warn.length : null;
       setHTML(
         "sum-" + p,
-        fin(need) && fin(S.lenN)
+        res && fin(need) && fin(S.lenN)
           ? `<span class="${ok ? "good" : "bad"}">${ok ? "✓ OK" : "⚠ check"}</span>`
           : "",
       );
@@ -823,10 +833,12 @@
           tile("QNH", qnhStr(S.qnh)),
           tile("Elevation", S.elev, fin(S.t.da) ? `DA ${r0(S.t.da)} ft` : ""),
           tile(isD ? "Landing mass" : "T/O mass", fin(S.tow) ? r0(S.tow) + " lb" : ""),
-          isD
+          !res
+            ? "" // distances only appear in a calculated result
+            : isD
             ? tile("Landing dist.", fin(S.l.tot) ? r10(S.l.tot) + " ft" : "", fin(S.lenN) ? `of ${r0(S.lenN)} ft` : "", S.l.tot > S.lenN ? "bad" : "")
             : tile("T/O dist. 50 ft", fin(S.t.tod) ? r10(S.t.tod) + " ft" : "", fin(S.lenN) ? `of ${r0(S.lenN)} ft` : "", S.t.tod > S.lenN ? "bad" : ""),
-          isD ? "" : tile("Emerg. landing", fin(S.l.tot) ? r10(S.l.tot) + " ft" : "", "same runway, T/O mass", S.l.tot > S.lenN ? "bad" : ""),
+          !res || isD ? "" : tile("Emerg. landing", fin(S.l.tot) ? r10(S.l.tot) + " ft" : "", "same runway, T/O mass", S.l.tot > S.lenN ? "bad" : ""),
         ].join(""),
       );
       renderRunways(p);
@@ -857,24 +869,116 @@
         : firstIssue;
     const msg = todo1 || todo2 || todo3;
     const kind = !msg ? "ok" : todo1 || (todo2 && todo2 !== massW[0]) || loading ? "todo" : "warn";
-    setHTML(
-      "next",
-      `<b>${kind === "ok" ? "Ready" : kind === "warn" ? "Check" : "Next"}</b> ${esc(msg || "All values within limits. Compare the sheets, then download or print.")}`,
-    );
-    byId("next").className = kind;
+    // Calculate is offered once nothing required is missing (limit warnings do not block it)
+    const canCalc = !todo1 && !(todo2 && todo2 !== massW[0]) && !loading && !incomplete;
+    cur = { sheets, L, LW, canCalc, massW };
+    let bannerKind = kind;
+    if (res) {
+      bannerKind = "ok";
+      setHTML(
+        "next",
+        `<b>Result</b> Calculation #${esc(s.calcId)} · ${esc(fmtStamp(s.calcAt))} · tokens left ${tokens()} <button type="button" id="editBtn">Edit</button><button type="button" id="newBtn">New flight</button>`,
+      );
+    } else if (canCalc) {
+      const none = tokens() < 1;
+      bannerKind = none || notice || msg ? "warn" : "ok";
+      const text = none
+        ? "No tokens left – ask the admin for more."
+        : notice || msg || "Ready – check the weather values, then calculate";
+      setHTML(
+        "next",
+        `<b>${bannerKind === "ok" ? "Ready" : "Check"}</b> ${esc(text)}<button type="button" class="pri" id="calcBtn"${none || pending ? " disabled" : ""}>${pending ? "Calculating…" : "Calculate (1 token)"}</button>`,
+      );
+    } else {
+      setHTML("next", `<b>${kind === "warn" ? "Check" : "Next"}</b> ${esc(msg)}${notice ? `<span class="note">${esc(notice)}</span>` : ""}`);
+    }
+    byId("next").className = bannerKind;
     [todo1, todo2, todo3].forEach((t, i) => {
       byId("tick" + (i + 1)).textContent = t ? "" : "✓";
     });
+    syncChrome();
 
+    // The single gate: the PDF is only built and previewed for a calculated result.
+    if (!res) {
+      seq++; // drop any preview still rendering
+      lastBytes = null;
+      const host = $("#pages");
+      if (!host.dataset.ph) {
+        host.innerHTML = '<p class="ph">Results and the PDF appear after you calculate.</p>';
+        host.dataset.ph = "1";
+      }
+      syncChrome();
+      return;
+    }
     buildPdf(s, L, sheets, occ)
       .then((b) => {
+        if (!isRes()) return;
         lastBytes = b;
+        syncChrome();
         return preview(b);
       })
       .catch((e) => {
         console.error(e);
         setHTML("next", "<b>PDF error</b> " + esc(e.message));
       });
+  }
+
+  /* ---------- account chrome, locking, toast ---------- */
+  let cur = null; // last computed sheets, for the confirm dialog
+  const fmtStamp = (iso) => {
+    const d = new Date(iso);
+    return isNaN(d) ? String(iso || "") : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  };
+  function syncChrome() {
+    const t = tokens();
+    const b = byId("tokens");
+    b.textContent = `${t} token${t === 1 ? "" : "s"}`;
+    b.className = "badge" + (t < 1 ? " low" : "");
+    byId("who").textContent = profile.name || profile.email || "";
+    byId("adminLink").hidden = profile.role !== "admin";
+    const lock = isLocked(),
+      res = isRes();
+    document.querySelectorAll("#steps input, #steps select, #steps textarea, #steps button").forEach((el) => {
+      el.disabled = el.matches("[data-act]") ? !(res && lastBytes) : lock;
+    });
+    document.querySelectorAll("header [data-act]").forEach((el) => {
+      el.disabled = !(res && lastBytes);
+    });
+    byId("reset").disabled = pending;
+    byId("histBtn").disabled = pending;
+  }
+  let toastTimer = null;
+  function toast(msg) {
+    const el = byId("toast");
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (el.hidden = true), 3500);
+  }
+  // Native <dialog> (Esc closes it). Resolves with the data-v of the clicked button, or null.
+  let dlgN = 0;
+  function dialog(html, onOpen) {
+    return new Promise((resolve) => {
+      const d = document.createElement("dialog"),
+        id = "dlgT" + ++dlgN;
+      d.innerHTML = html.replace("{ID}", id);
+      d.setAttribute("aria-labelledby", id);
+      let v = null;
+      d.addEventListener("click", (e) => {
+        const b = e.target.closest("[data-v]");
+        if (b) {
+          v = b.dataset.v;
+          d.close();
+        }
+      });
+      d.addEventListener("close", () => {
+        d.remove();
+        resolve(v);
+      });
+      document.body.appendChild(d);
+      d.showModal();
+      if (onOpen) onOpen(d);
+    });
   }
   const changed = () => {
     if (window.App.onChange) window.App.onChange();
@@ -915,7 +1019,8 @@
     bemNote(r);
   }
   const regVal = () => String(state.reg || "").trim().toUpperCase();
-  applyBem(regVal());
+  if (isRes()) bemNote(regVal()); // a calculated sheet keeps the BEM and CG it was calculated with
+  else applyBem(regVal());
 
   // A changed airport invalidates what was fetched or typed for that point.
   function resetPoint(p) {
@@ -938,7 +1043,8 @@
   }
   document.addEventListener("input", (e) => {
     const el = e.target;
-    if (!el.dataset || !el.dataset.k) return;
+    if (!el.dataset || !el.dataset.k || isLocked()) return;
+    notice = "";
     const k = el.dataset.k;
     if (/^R\d+$/.test(k)) {
       // commit while typing once it is a known airport or four characters; otherwise on blur
@@ -970,6 +1076,7 @@
   });
   document.addEventListener("change", (e) => {
     const el = e.target;
+    if (isLocked()) return;
     if (el.dataset && /^R\d+$/.test(el.dataset.k || "")) return commitStop(el);
     if (el.dataset && el.dataset.k === "reg") {
       el.value = state.reg = regVal();
@@ -990,7 +1097,7 @@
     }
   });
   function act(name) {
-    if (!lastBytes) return;
+    if (!lastBytes || !isRes()) return;
     const url = URL.createObjectURL(new Blob([lastBytes], { type: "application/pdf" }));
     if (name === "print") return window.open(url, "_blank");
     const a = document.createElement("a");
@@ -1002,6 +1109,10 @@
     const t = e.target;
     const a = t.closest("[data-act]");
     if (a) return act(a.dataset.act);
+    if (t.closest("#calcBtn")) return calculate();
+    if (t.closest("#editBtn")) return editInputs();
+    if (t.closest("#newBtn")) return byId("reset").click();
+    if (isLocked()) return;
     if (t.closest("#addStop")) {
       const n = nStops();
       setState("R" + n, "");
@@ -1078,6 +1189,7 @@
   });
   window.addEventListener("resize", schedule);
   $("#reset").addEventListener("click", () => {
+    notice = "";
     Object.keys(state).forEach((k) => delete state[k]);
     Object.assign(state, DEFAULTS, { date: today(), edited: {} });
     fill($("#steps"));
@@ -1088,6 +1200,148 @@
     changed();
   });
 
+  /* ---------- calculate (1 token), edit, history ---------- */
+  function sourceOf(p) {
+    const label = Snapshot.sourceLabel(Snapshot.source(state[`${p}.info`]));
+    if (!label) return "entered by you";
+    return ["wdir", "wspd", "wgust", "qnh", "oat"].some((k) => state.edited[`${p}.${k}`]) ? `${label}, some values edited by you` : label;
+  }
+  async function calculate() {
+    if (pending || isRes() || !cur || !cur.canCalc || tokens() < 1) return;
+    const { sheets, L, LW } = cur;
+    const lines = sheets.map((S, i) => {
+      const where = [S.apt, S.rwy && "RWY " + S.rwy].filter(Boolean).join(" ");
+      return `${S.isD ? "Landing" : "Leg " + (i + 1)} · ${where} · wind ${windStr(S.wdir, S.wspd, S.wgust)} · ${fin(S.oat) ? S.oat + " °C" : "– °C"} · QNH ${qnhStr(S.qnh) || "–"} · source: ${sourceOf(S.p)}`;
+    });
+    const ok = await dialog(
+      `<h3 id="{ID}">Calculate this flight?</h3>
+      <ul>${lines.map(li).join("")}</ul>
+      <p>TOM <b>${r0(L.tom)}</b> lb · LM <b>${r0(LW.lm)}</b> lb</p>
+      <p><b>Uses 1 token</b> (you have ${tokens()}). Changing anything afterwards and calculating again costs another token; identical inputs are free.</p>
+      <div class="btns"><button type="button" data-v="no">Cancel</button><button type="button" class="pri" data-v="yes">Calculate (1 token)</button></div>`,
+    );
+    if (ok !== "yes" || pending || isRes()) return;
+    pending = true;
+    notice = "";
+    update();
+    try {
+      const m = Snapshot.meta(state),
+        r = await Auth.rpc("calculate", {
+          p_inputs: Snapshot.canonical(state),
+          p_flight_date: m.flight_date,
+          p_dep_time: m.dep_time,
+          p_route: m.route,
+          p_reg: m.reg,
+        });
+      state.mode = "result";
+      state.calcId = r.id;
+      state.calcAt = r.created_at;
+      if (Number.isFinite(+r.balance)) profile.tokens = +r.balance;
+      toast(r.charged ? "1 token used" : "Already calculated – no token used");
+    } catch (e) {
+      const code = String((e && e.message) || e);
+      if (code === "account_disabled") return Auth.signOut();
+      if (code === "no_tokens") {
+        notice = "No tokens left – ask the admin for more.";
+        Auth.profile().then((p) => {
+          profile = p;
+          update();
+        }, () => {});
+      } else
+        notice = /Failed to fetch|NetworkError|Load failed|network/i.test(code)
+          ? "No connection – check your network and calculate again. No token was used."
+          : `Could not calculate (${code}). No token was used.`;
+    } finally {
+      pending = false;
+      update();
+    }
+  }
+  function editInputs() {
+    if (!isRes()) return;
+    state.mode = "draft";
+    delete state.calcId;
+    delete state.calcAt;
+    notice = "";
+    update();
+    changed();
+  }
+  const blankState = () => Object.assign({}, DEFAULTS, { date: today() });
+  // Replace the form with a stored calculation: as a result (free) or as a draft template.
+  function loadInputs(inputs, row, asResult) {
+    const st = Snapshot.fromCanonical(inputs);
+    Object.keys(state).forEach((k) => delete state[k]);
+    Object.assign(state, DEFAULTS, st, { edited: {} });
+    if (asResult) {
+      // protect the stored values from a later weather fetch (Edit keeps them)
+      points().forEach((p) =>
+        AUTO.forEach((k) => {
+          const v = state[`${p}.${k}`];
+          if (v !== undefined && v !== "") state.edited[`${p}.${k}`] = 1;
+        }),
+      );
+      state.mode = "result";
+      state.calcId = row.id;
+      state.calcAt = row.created_at;
+    } else if (!state.date || state.date < today()) {
+      state.date = today();
+      state.time = "";
+      clearFetched();
+    }
+    notice = "";
+    fill($("#steps"));
+    renderRoute();
+    renderLegs();
+    bemNote(regVal());
+    update();
+    changed();
+  }
+  async function useCalc(id, asResult) {
+    let row;
+    try {
+      row = (await Auth.rest(`/calculations?id=eq.${id}&select=id,created_at,inputs`))[0];
+    } catch (e) {
+      return toast("Could not load that calculation: " + String((e && e.message) || e));
+    }
+    if (!row || !row.inputs) return toast("Calculation not found");
+    if (!isRes() && Snapshot.fingerprint(state) !== Snapshot.fingerprint(blankState()) && Snapshot.fingerprint(state) !== Snapshot.fingerprint(Snapshot.fromCanonical(row.inputs))) {
+      const ok = await dialog(
+        `<h3 id="{ID}">Replace what you entered?</h3><p>The form has values that are not saved as a calculation. Loading calculation #${esc(row.id)} replaces them.</p>
+        <div class="btns"><button type="button" data-v="no">Keep mine</button><button type="button" class="pri" data-v="yes">Replace</button></div>`,
+      );
+      if (ok !== "yes") return;
+    }
+    loadInputs(row.inputs, row, asResult);
+  }
+  async function openHistory() {
+    const body = (d, html) => (d.querySelector("#histBody").innerHTML = html);
+    const v = await dialog(
+      `<h3 id="{ID}">History</h3><div id="histBody" aria-live="polite">Loading…</div>
+      <div class="btns"><button type="button" data-v="close">Close</button></div>`,
+      async (d) => {
+        try {
+          const rows = await Auth.rest("/calculations?select=id,created_at,flight_date,dep_time,route,reg&order=created_at.desc&limit=50");
+          if (!rows || !rows.length) return body(d, "<p>No calculations yet. Each calculation you run is listed here.</p>");
+          body(
+            d,
+            `<ul class="hist">${rows
+              .filter((r) => /^\d+$/.test(String(r.id)))
+              .map(
+                (r) => `<li><span class="hmeta"><b>${esc(r.route || "–")}</b> · ${esc(r.reg || "–")}<br>${esc(fmtDate(r.flight_date) || "no date")} ${esc(r.dep_time || "")} · calculated ${esc(fmtStamp(r.created_at))}</span>
+                <button type="button" data-v="open:${r.id}">Open</button><button type="button" data-v="tpl:${r.id}">Use as template</button></li>`,
+              )
+              .join("")}</ul>`,
+          );
+        } catch (e) {
+          body(d, `<p class="bad">Could not load the history: ${esc(String((e && e.message) || e))}</p>`);
+        }
+      },
+    );
+    const m = /^(open|tpl):(\d+)$/.exec(v || "");
+    if (m) useCalc(m[2], m[1] === "open");
+  }
+  byId("histBtn").addEventListener("click", openHistory);
+  byId("signout").addEventListener("click", () => Auth.signOut());
+
   // For autofill.js: it reads the flight through this and writes what it fetched.
   window.App = {
     noserver,
@@ -1096,10 +1350,11 @@
     pv,
     // write a fetched value; a value the user typed is left alone
     setAuto(p, k, v) {
-      if (state.edited[`${p}.${k}`]) return;
+      if (isLocked() || state.edited[`${p}.${k}`]) return;
       setState(`${p}.${k}`, v);
     },
     setMeta(p, o) {
+      if (isLocked()) return;
       Object.keys(o).forEach((k) => {
         if (o[k] === undefined) delete state[`${p}.${k}`];
         else state[`${p}.${k}`] = o[k];
@@ -1114,4 +1369,7 @@
     refresh: null,
   };
   update();
+  window.dispatchEvent(new Event("app-ready")); // autofill.js starts now
+  document.body.classList.remove("booting");
+  }
 })();
