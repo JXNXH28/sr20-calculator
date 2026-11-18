@@ -24,8 +24,20 @@ Per leg: flight time and trip fuel; at each stop, ground time and an optional "r
 minus the fuel burned on earlier legs (or ZFM + refuelled fuel). Density altitude = PA + 120 × (OAT − ISA), ISA rounded
 to whole °C.
 
-Everything you enter is saved in this browser's localStorage only. A flight saved on an earlier day keeps route,
+The draft you are entering is saved in this browser's localStorage. A flight saved on an earlier day keeps route,
 people and settings; its date, time and weather are cleared.
+
+## Accounts and tokens
+Sign-in is required (Supabase Auth; accounts by admin invite only). **1 token = 1 calculation**:
+- While drafting you see the inputs, the fetched runway/weather values with their source, density altitude, head/tailwind,
+  masses and LAT airport limits — check or overwrite the weather, then press **Calculate (1 token)**.
+- The inputs are frozen into a snapshot stored on the server; only then are distances, verdicts and the PDF shown, and the
+  form is read-only. Any change means **Edit** → Calculate again → 1 more token. Identical inputs are never charged twice.
+- **History** lists your calculations; opening one (view, print, download) is free, "Use as template" starts a new draft.
+- `/admin.html` (admins): usage per user by period, grant/remove tokens, disable users, invite, calculation log with each
+  snapshot's inputs.
+
+Setup (Supabase project, SQL, SMTP, Vercel env vars): [docs/SETUP.md](docs/SETUP.md).
 
 ## Airport data
 - `airports.js`: LAT US approved airport list (THB Appendix A, 07 APR 2026): approvals, distance from GYR, notes, time
@@ -50,9 +62,14 @@ aviationweather.gov sends no CORS headers, so `api/aw/[ep].js` relays its airpor
 **Deploy (Vercel, free Hobby plan):** import the GitHub repo in Vercel, framework preset "Other", no build command.
 Every push to `main` deploys; other branches get preview URLs. (Hobby and the free Open-Meteo tier are non-commercial.)
 
-**Local:** `node server.js`, then open http://localhost:8765. Add `?noserver` to the URL to hide the autofill.
+Set `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` in Vercel (Production + Preview).
+
+**Local:** export the same three variables, `node server.js`, then open http://localhost:8765 (it refuses to start without them). Add `?noserver` to the URL to hide the autofill.
 
 ## Files
 - `perf.js` calculations (tables, interpolation, mass & balance, leg weights), tested with `node test.js`
 - `app.js` form + PDF drawing, `autofill.js` form filling, `wx.js` weather selection and LAT limit checks (tested), `airports.js` LAT list, `fleet.js` BEM/CG, `api/aw/[ep].js` relay, `server.js` local server
+- `snapshot.js` canonical calculation inputs (tested); `auth.js` sign-in client, `login.html`; `lib/verify.js` JWT check used by
+  `middleware.js` (Vercel) and `server.js`; `api/config.js` public Supabase config; `admin.html`/`admin.js` and
+  `api/admin/invite.js` admin panel; `db/schema.sql` tables, access rules and token functions
 - `form1002.pdf` source form, embedded as `form1002.js`; `vendor/` pdf-lib and pdf.js
