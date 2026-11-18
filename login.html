@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in - SR20 T/O &amp; Load Sheet</title>
+<style>
+:root{--bg:#eef1f5;--fg:#16202c;--card:#fff;--line:#c9d1db;--acc:#14305e;--err:#c0392b;--ok:#2e8b57}
+@media (prefers-color-scheme:dark){:root{--bg:#161a20;--fg:#e6ebf1;--card:#212832;--line:#38424f;--acc:#7fa6e6}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--fg);font:14px/1.35 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
+.card{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:20px}
+h1{font-size:16px;margin:0 0 4px;color:var(--acc)}
+h2{font-size:14px;margin:0 0 12px;font-weight:600}
+form{display:flex;flex-direction:column;gap:10px}
+label{display:flex;flex-direction:column;gap:2px;font-size:12px}
+input{font:inherit;font-size:16px;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);width:100%}
+button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+@media (prefers-color-scheme:dark){button.pri{color:#111}}
+button:disabled{opacity:.6;cursor:default}
+button.link{border:0;background:none;color:var(--acc);padding:4px 0;text-align:left;text-decoration:underline}
+.msg{border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:12px;border:1px solid var(--line)}
+.msg.err{border-color:var(--err)}.msg.ok{border-color:var(--ok)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>SR20 T/O &amp; Load Sheet</h1>
+  <div id="msg" class="msg" hidden role="status"></div>
+
+  <form id="fSignin" hidden>
+    <h2>Sign in</h2>
+    <label>Email<input id="si-email" type="email" autocomplete="username" required></label>
+    <label>Password<input id="si-pass" type="password" autocomplete="current-password" required></label>
+    <button class="pri" type="submit">Sign in</button>
+    <button class="link" type="button" id="toForgot">Forgot password?</button>
+  </form>
+
+  <form id="fForgot" hidden>
+    <h2>Reset password</h2>
+    <label>Email<input id="fg-email" type="email" autocomplete="username" required></label>
+    <button class="pri" type="submit">Send reset link</button>
+    <button class="link" type="button" id="toSignin">Back to sign in</button>
+  </form>
+
+  <form id="fSet" hidden>
+    <h2 id="setTitle">Set your password</h2>
+    <label id="nameRow" hidden>Your name<input id="st-name" type="text" autocomplete="name"></label>
+    <label>New password (min. 8 characters)<input id="st-pass" type="password" autocomplete="new-password" minlength="8" required></label>
+    <label>Confirm password<input id="st-pass2" type="password" autocomplete="new-password" minlength="8" required></label>
+    <button class="pri" type="submit">Save password</button>
+  </form>
+</div>
+<script src="/api/config.js"></script>
+<script src="/auth.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var params = new URLSearchParams(location.search), next = params.get('next') || '/';
+  if (next.charAt(0) !== '/' || next.charAt(1) === '/' || next.charAt(1) === '\\') next = '/';
+  var forms = ['fSignin', 'fForgot', 'fSet'];
+  function show(id) { forms.forEach(function (f) { $(f).hidden = f !== id; }); }
+  function say(text, kind) { var m = $('msg'); m.textContent = text || ''; m.hidden = !text; m.className = 'msg ' + (kind || 'err'); }
+  function busy(form, on) { form.querySelectorAll('button').forEach(function (b) { b.disabled = on; }); }
+  function go(url) { location.replace(url); }
+
+  if (!window.SB_CONFIG || !SB_CONFIG.url || !SB_CONFIG.anonKey) { say('Sign-in is not configured on this server.'); return; }
+  if (params.get('disabled') === '1') say('Your account is disabled — contact the admin.');
+
+  $('toForgot').onclick = function () { say(''); $('fg-email').value = $('si-email').value; show('fForgot'); };
+  $('toSignin').onclick = function () { say(''); show('fSignin'); };
+
+  $('fSignin').onsubmit = function (e) {
+    e.preventDefault(); say(''); busy(this, true);
+    var f = this;
+    Auth.signIn($('si-email').value, $('si-pass').value).then(function () { go(next); }, function (err) { busy(f, false); say(err.message); });
+  };
+  $('fForgot').onsubmit = function (e) {
+    e.preventDefault(); say(''); busy(this, true);
+    var f = this;
+    Auth.sendReset($('fg-email').value).then(function () { busy(f, false); say('If the address has an account, a reset link is on its way.', 'ok'); },
+      function (err) { busy(f, false); say(/too many/i.test(err.message) ? err.message : 'If the address has an account, a reset link is on its way.', /too many/i.test(err.message) ? 'err' : 'ok'); });
+  };
+
+  var mode = null;
+  $('fSet').onsubmit = function (e) {
+    e.preventDefault(); say('');
+    var p = $('st-pass').value;
+    if (p.length < 8) return say('Use at least 8 characters.');
+    if (p !== $('st-pass2').value) return say('The two passwords do not match.');
+    var name = mode === 'invite' ? $('st-name').value.trim() : '';
+    var f = this; busy(f, true);
+    Auth.setPassword(p, name || undefined).then(function () { go('/'); }, function (err) { busy(f, false); say(err.message); });
+  };
+
+  var p0;
+  try { p0 = Auth.consumeUrl(); } catch (err) { p0 = Promise.reject(err); }
+  p0.then(function (type) {
+    if (type) {
+      mode = type;
+      $('setTitle').textContent = type === 'invite' ? 'Welcome — set your password' : 'Choose a new password';
+      $('nameRow').hidden = type !== 'invite';
+      show('fSet'); return;
+    }
+    if (Auth.hasSession()) {
+      return Auth.token().then(function () { go(next); }, function () { show('fSignin'); });
+    }
+    show('fSignin');
+  }, function (err) { say(err.message); show('fSignin'); });
+})();
+</script>
+</body>
+</html>

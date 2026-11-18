@@ -1,8 +1,13 @@
 // Read-only relay for aviationweather.gov (it sends no CORS headers). Used by Vercel (api/ routing) and server.js.
 // GET /api/aw/{airport|metar|taf}?ids=KSEF[&hours=N]
+const { verifyJwt, tokenFromRequest } = require('../../lib/verify.js');
 const CACHE = { airport: 86400, metar: 60, taf: 60 };
 
 module.exports = async function handler(req, res) {
+  if (!(await verifyJwt(tokenFromRequest(req.headers), process.env.SUPABASE_URL))) {
+    res.statusCode = 401; res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.end('{"error":"unauthenticated"}');
+  }
   const url = new URL(req.url, 'http://localhost');
   const ep = url.pathname.split('/').pop();
   const ids = url.searchParams.get('ids') || '';
