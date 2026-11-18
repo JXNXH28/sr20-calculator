@@ -1342,6 +1342,22 @@
   byId("histBtn").addEventListener("click", openHistory);
   byId("signout").addEventListener("click", () => Auth.signOut());
 
+  // Tokens granted (or an account disabled) while this page is open: re-read the profile when the tab comes back.
+  let lastProfileAt = Date.now();
+  function refreshProfile() {
+    if (document.visibilityState !== "visible" || Date.now() - lastProfileAt < 10000) return;
+    lastProfileAt = Date.now();
+    Auth.profile().then((p) => {
+      if (!p) return;
+      if (p.disabled) return Auth.signOut();
+      const changed = p.tokens !== profile.tokens || p.role !== profile.role;
+      profile = p;
+      if (changed) update();
+    }, () => {});
+  }
+  document.addEventListener("visibilitychange", refreshProfile);
+  window.addEventListener("focus", refreshProfile);
+
   // For autofill.js: it reads the flight through this and writes what it fetched.
   window.App = {
     noserver,
