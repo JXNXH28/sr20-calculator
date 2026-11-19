@@ -204,6 +204,7 @@
         <div class="wide">${control("vrbWorst", "Variable wind: assume worst case (full tailwind + crosswind)", "c")}</div>
       </div></details>
     </section>
+    <div id="preSlot"></div>
     <h2 class="sech">${stepIn(3, "Check each takeoff and the landing")}</h2>
     <div id="legs"></div>`;
   $("#lists").innerHTML =
@@ -727,6 +728,155 @@
     setHTML("fstat-" + p, parts.join(" · "));
   }
 
+  /* ---------- pre-flight check (draft only): weather plausibility, never a performance verdict ---------- */
+  const STALE_MS = 30 * 60000, // fetched longer ago than this: refresh
+    METAR_STALE_MS = 75 * 60000; // METARs are hourly: older than this means a newer one is overdue
+  const pre = document.createElement("div");
+  pre.id = "pre";
+  const phoneMq = window.matchMedia ? matchMedia("(max-width:900px)") : null;
+  let ageTimer = null, // one interval, only while drafting
+    staleSig = "";
+  const ageText = (ms, fetched) => {
+    const m = Math.max(0, Math.floor((Date.now() - ms) / 60000)),
+      t = m < 1 ? "just now" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+    return m < 1 ? (fetched ? "fetched just now" : "just now") : fetched ? `fetched ${t} ago` : `${t} old`;
+  };
+  const friendlySrc = (src) => {
+    const m = /^model (forecast|analysis)/.exec(src);
+    return m ? "Model " + m[1] : src;
+  };
+  // Where each weather group (wind; temp + QNH) of a sheet came from, how old it is, and whether it is past 30 min.
+  // Observation time: info.obs (ms, from the METAR) recorded by autofill.js; fetch time: state["<p>.fat"].
+  function wxInfo(p) {
+    const info = state[`${p}.info`] || {},
+      out = info.out || [],
+      obs = info.obs || {},
+      fat = state[`${p}.fat`],
+      now = Date.now();
+    const line = (re) => {
+      const x = out.find((o) => re.test(o));
+      return x ? x.replace(re, "") : "";
+    };
+    const wsrc = line(/^wind: /),
+      tsrc = line(/^temp\/QNH: /) || wsrc;
+    const grp = (src, at, keys) => {
+      const mine = keys.every((k) => state.edited[`${p}.${k}`]),
+        part = !mine && keys.some((k) => state.edited[`${p}.${k}`]);
+      const metar = /^METAR/.test(src),
+        useObs = metar && fin(at);
+      const g = { label: mine ? "Entered by you" : friendlySrc(src), part, mine, at: null, fetched: false, stale: false, ageMs: 0 };
+      if (!mine && src) {
+        if (useObs) g.at = at;
+        else if (fin(fat)) {
+          g.at = fat;
+          g.fetched = true;
+        }
+        const obsAge = useObs ? now - at : null,
+          fetchAge = fin(fat) ? now - fat : null;
+        g.ageMs = obsAge !== null ? obsAge : fetchAge !== null ? fetchAge : 0;
+        // Stale = fetched long ago (a refresh fixes it) or a METAR older than the hourly cycle allows.
+        // A normal 31–59 min old METAR is the current one, so it is not flagged.
+        g.stale = (fetchAge !== null && fetchAge > STALE_MS) || (obsAge !== null && obsAge > METAR_STALE_MS);
+      }
+      return g;
+    };
+    const w = grp(wsrc, obs.wind, ["wdir", "wspd"]),
+      t = grp(tsrc, obs.temp, ["oat", "qnh"]);
+    return { w, t, stale: w.stale || t.stale, min: Math.floor(Math.max(w.ageMs, t.ageMs) / 60000) };
+  }
+  const srcRow = (name, g) => {
+    let h = g.label ? esc(g.label) : '<span class="hint">not loaded – press ↻ Refresh or enter the values</span>';
+    if (g.part) h += " (partly edited by you)";
+    if (g.at !== null) h += ` · <span class="age" data-at="${g.at}"${g.fetched ? ' data-f="1"' : ""}>${esc(ageText(g.at, g.fetched))}</span>`;
+    return `<div><span>${name}</span> ${h}</div>`;
+  };
+  function preCard(S, idx, apt, latW) {
+    const p = S.p,
+      isD = S.isD,
+      wc = S.t.wind,
+      hdg = num(pv(p, "hdg")),
+      wx = wxInfo(p),
+      info = state[`${p}.info`] || {},
+      load = !!busy[p];
+    const hasWind = fin(S.wspd) || fin(S.wdir),
+      calm = !hasWind || isCalm(S.wdir, S.wspd);
+    const surf = (SURF.find(([v]) => v === pv(p, "surf")) || [])[1] || "";
+    const where = [S.apt, apt && apt.name].filter(Boolean).join(" · ");
+    const title = isD ? "Landing" : `Leg ${idx + 1}`;
+    const head = wc && !calm ? wc.head : 0,
+      cross = wc && !calm ? wc.cross : 0;
+    const flags = [];
+    if (!load) {
+      if (info.err) flags.push(info.err);
+      const miss = [
+        !S.rwy && "runway",
+        !fin(hdg) && "runway heading",
+        !fin(S.lenN) && "runway length",
+        !fin(num(pv(p, "elev"))) && "elevation",
+        !hasWind && "wind",
+        !fin(S.qnh) && "QNH",
+        !fin(S.oat) && "OAT",
+      ].filter(Boolean);
+      if (miss.length) flags.push(`Missing: ${miss.join(", ")} – ${noserver ? "enter them under Edit values" : "press ↻ Refresh or use Edit values"}`);
+      (info.warn || []).forEach((x) => flags.push(x));
+      if (wx.stale) flags.push("Weather may be outdated – refresh before calculating");
+      if (wc && !calm && Math.round(-head) >= 1) flags.push(`Tailwind ${r0(-head)} kt${wc.vrb ? " (variable wind, worst case)" : ""}`);
+      if (wc && !calm && Math.abs(cross) >= 10 - 1e-9) flags.push(`Crosswind ${r0(Math.abs(cross))} kt`);
+      latW.forEach((x) => flags.push(x));
+    }
+    const uniq = [...new Set(flags)];
+    const status = load
+      ? '<span class="pst">Loading…</span>'
+      : uniq.length
+        ? `<span class="pst warn">⚠ ${uniq.length} flag${uniq.length > 1 ? "s" : ""}</span>`
+        : '<span class="pst ok">✓ Weather looks complete</span>';
+    const tiles = [
+      tile("Runway", S.rwy),
+      tile("Heading", fin(hdg) ? r0(hdg) + " °M" : ""),
+      tile("Length", fin(S.lenN) ? r0(S.lenN) + " ft" : ""),
+      tile("Surface", surf),
+      tile("Wind", hasWind ? windStr(S.wdir, S.wspd, S.wgust) : ""),
+      calm
+        ? tile("Head/tailwind", hasWind ? "Calm" : "")
+        : tile(head >= 0 ? "Headwind" : "Tailwind", wc ? r0(Math.abs(head)) + " kt" : "", wc && wc.vrb ? "variable, worst case" : "", wc && head < 0 ? "bad" : ""),
+      calm
+        ? tile("Crosswind", hasWind ? "0 kt" : "")
+        : tile("Crosswind", wc ? r0(Math.abs(cross)) + " kt" : "", wc && !wc.vrb ? `from the ${cross >= 0 ? "right" : "left"}` : ""),
+      tile("OAT", fin(S.oat) ? S.oat + " °C" : ""),
+      tile("QNH", fin(S.qnh) ? qnhStr(S.qnh) + (S.qnh > 80 ? " hPa" : " inHg") : ""),
+      tile("Elevation", S.elev),
+      tile("Pressure alt.", fin(S.t.pa) ? r0(S.t.pa) + " ft" : ""),
+      tile("Density alt.", fin(S.t.da) ? r0(S.t.da) + " ft" : ""),
+    ].join("");
+    const can = !isLocked();
+    return `<section class="pcard" data-p="${p}">
+      <div class="pch"><b>${title}${S.apt ? ` · ${esc(S.apt)}` : ""}</b>${status}</div>
+      ${where ? `<div class="pwhere">${esc(where)}</div>` : ""}
+      <div class="tiles">${tiles}</div>
+      <div class="psrc">${srcRow("Wind", wx.w)}${srcRow("Temp / QNH", wx.t)}</div>
+      ${uniq.length ? `<ul class="lwarn">${uniq.map(li).join("")}</ul>` : ""}
+      <div class="pact"><button type="button" data-pre-edit="${p}"${can ? "" : " disabled"}>Edit values</button>${noserver ? "" : `<button type="button" data-refresh="${p}"${load || !can || !validCode(S.apt) ? " disabled" : ""}>↻ Refresh</button>`}</div>
+    </section>`;
+  }
+  function preHTML(cards, L, LW, massW) {
+    return `<h2 class="preh">Pre-flight check</h2>
+      <p class="pren">Weather and runway plausibility only. Distances, speeds and the PDF appear after you calculate.</p>
+      ${cards.join("")}
+      <section class="pcard pmass"><div class="pch"><b>Masses</b></div>
+        <p>${fin(L.tom) ? `ZFM <b>${r0(L.zfm)}</b> · T/O <b>${r0(L.tom)}</b> · landing <b>${r0(LW.lm)}</b> lb` : "Masses are not complete yet (step 2)."}</p>
+        ${massW.length ? `<ul class="lwarn">${massW.map(li).join("")}</ul>` : ""}</section>`;
+  }
+  // every 60 s: refresh the age texts only; a full update() only when a sheet crossed the 30 min line
+  const staleNow = () => points().map((p) => (wxInfo(p).stale ? 1 : 0)).join("");
+  function tickAge() {
+    if (isRes() || document.hidden) return;
+    document.querySelectorAll("#pre .age").forEach((el) => {
+      el.textContent = ageText(+el.dataset.at, el.dataset.f === "1");
+    });
+    if (staleNow() !== staleSig) update();
+  }
+  document.addEventListener("visibilitychange", tickAge);
+
   function update() {
     save();
     const s = state,
@@ -772,7 +922,8 @@
     );
 
     // step 3: one sheet per takeoff + the destination
-    const sheets = [];
+    const sheets = [],
+      cards = [];
     let firstIssue = null,
       loading = false,
       incomplete = null,
@@ -789,6 +940,7 @@
         ...(S.apt && validCode(S.apt) && !apt ? [`${S.apt} is not on the LAT approved airport list`] : []),
         ...W.latChecks(apt, { rwy: S.rwy, tow: S.tow, oat: S.oat, head, landing: isD }),
       ];
+      if (!res) cards.push(preCard(S, idx, apt, latW));
       const warn = [
         ...new Set(
           res
@@ -932,16 +1084,32 @@
     syncChrome();
 
     // The single gate: the PDF is only built and previewed for a calculated result.
+    const host = $("#pages");
     if (!res) {
       seq++; // drop any preview still rendering
       lastBytes = null;
-      const host = $("#pages");
-      if (!host.dataset.ph) {
-        host.innerHTML = '<p class="ph">Results and the PDF appear after you calculate.</p>';
+      // draft: the pre-flight panel (weather only) sits where the PDF will be; on phones inside the left column above step 3
+      if (host.dataset.ph !== "1") {
+        host.replaceChildren();
         host.dataset.ph = "1";
       }
+      const slot = phoneMq && phoneMq.matches ? byId("preSlot") : host;
+      if (pre.parentNode !== slot) slot.appendChild(pre);
+      const html = preHTML(cards, L, LW, massW);
+      if (pre.innerHTML !== html) pre.innerHTML = html;
+      staleSig = staleNow();
+      if (!ageTimer) ageTimer = setInterval(tickAge, 60000);
       syncChrome();
       return;
+    }
+    if (ageTimer) {
+      clearInterval(ageTimer);
+      ageTimer = null;
+    }
+    pre.remove();
+    if (host.dataset.ph === "1") {
+      host.innerHTML = '<p class="ph">Preparing the PDF…</p>';
+      host.dataset.ph = "2";
     }
     buildPdf(s, L, sheets, occ)
       .then((b) => {
@@ -1276,6 +1444,8 @@
       if (f === "new") return newFlight();
       if (f === "todo") return focusField(cur && cur.target);
     }
+    const pe = t.closest("[data-pre-edit]");
+    if (pe) return focusField(`${pe.dataset.preEdit}.elev`);
     const sb = t.closest(".sumbtn");
     if (sb) return expandStep(+sb.dataset.step, true);
     if (isLocked()) return;
@@ -1382,13 +1552,19 @@
       const where = [S.apt, S.rwy && "RWY " + S.rwy].filter(Boolean).join(" ");
       return `${S.isD ? "Landing" : "Leg " + (i + 1)} · ${where} · wind ${windStr(S.wdir, S.wspd, S.wgust)} · ${fin(S.oat) ? S.oat + " °C" : "– °C"} · QNH ${qnhStr(S.qnh) || "–"} · source: ${sourceOf(S.p)}`;
     });
+    const old = sheets.map((S, i) => ({ name: S.isD ? "Landing" : "Leg " + (i + 1), w: wxInfo(S.p) })).filter((x) => x.w.stale);
     const ok = await dialog(
       `<h3 id="{ID}">Calculate this flight?</h3>
       <ul>${lines.map(li).join("")}</ul>
+      ${old.length ? `<ul class="lwarn">${old.map((x) => li(`Weather for ${x.name} is ${x.w.min} min old.`)).join("")}</ul>` : ""}
       <p>TOM <b>${r0(L.tom)}</b> lb · LM <b>${r0(LW.lm)}</b> lb</p>
       <p><b>Uses 1 token</b> (you have ${tokens()}). Changing anything afterwards and calculating again costs another token; identical inputs are free.</p>
-      <div class="btns"><button type="button" data-v="no">Cancel</button><button type="button" class="pri" data-v="yes">Calculate (1 token)</button></div>`,
+      <div class="btns"><button type="button" data-v="no">Cancel</button>${old.length && !noserver ? '<button type="button" data-v="refresh">Refresh weather first</button>' : ""}<button type="button" class="pri" data-v="yes">Calculate (1 token)</button></div>`,
     );
+    if (ok === "refresh") {
+      if (window.App.refresh) window.App.refresh(true);
+      return;
+    }
     if (ok !== "yes" || pending || isRes()) return;
     pending = true;
     notice = "";

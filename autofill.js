@@ -162,6 +162,9 @@ async function run(p, icao, when, landing, key) {
       const use = list.find((e) => e.id === pick) || best; // a runway the user chose stays chosen
       set('rwy', use.id); set('hdg', use.hdg); set('len', use.len); set('surf', use.surf);
     }
+    // observation epoch (ms) per group, for the age shown in the pre-flight panel; null for model data. Bookkeeping inside info.
+    const ms = (x) => (x && x.at ? x.at * 1000 : null);
+    info.obs = { wind: ms(wind), temp: ms(wx.temp) || ms(wx.qnh) };
     A.setMeta(p, { info, ends: list, fkey: key, fat: Date.now() });
   } catch (e) {
     if (signal.aborted) return;
@@ -193,7 +196,7 @@ async function check(force) {
     if (!/^[A-Z0-9]{3,4}$/.test(icao)) return;
     const key = `${icao}|${Math.round(when / 60000)}`;
     const have = A.get(`${p}.fkey`) === key && Date.now() - (A.get(`${p}.fat`) || 0) < FRESH;
-    if (force !== p && (have || tried[p] === key)) return;
+    if (force !== true && force !== p && (have || tried[p] === key)) return; // force: one point, or true = all
     tried[p] = key;
     run(p, icao, when, landing, key);
   });
