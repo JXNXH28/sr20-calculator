@@ -877,6 +877,21 @@
   }
   document.addEventListener("visibilitychange", tickAge);
 
+  // Verdict strip (result mode): one row per sheet, from the same need / ok / warnings as the card verdicts.
+  function stripRow(S, idx, need, ok, warn) {
+    const known = fin(need) && fin(S.lenN) && S.lenN > 0,
+      spare = known ? (S.lenN - need) / S.lenN : NaN,
+      dist = (v) => (fin(v) ? r10(v) : "–"),
+      where = [S.apt, S.rwy && "RWY " + S.rwy].filter(Boolean).join(" ") || "–",
+      len = fin(S.lenN) ? r0(S.lenN) : "–",
+      spareTxt = !known ? "– % spare" : spare >= 0 ? `${Math.round(spare * 100)} % spare` : `${r10(need - S.lenN)} ft too long`,
+      lines = S.isD ? [`${dist(S.l.tot)} of ${len} ft · ${spareTxt}`] : [`T/O ${dist(S.t.tod)} of ${len} ft · ${spareTxt}`, `emergency landing ${dist(S.l.tot)} ft`];
+    return `<div class="vrow ${ok === null ? "na" : ok ? "ok" : "no"}"><div class="vh"><b>${S.isD ? "Landing" : "Leg " + (idx + 1)} · ${esc(where)}</b><span class="vst">${ok === null ? "–" : ok ? "✓ OK" : "⚠ check"}</span></div>
+      ${lines.map((x) => `<div class="vl">${esc(x)}</div>`).join("")}
+      <div class="vbar" aria-hidden="true"><i style="width:${known ? Math.min(100, Math.max(0, (need / S.lenN) * 100)).toFixed(1) : 0}%"></i></div>
+      ${warn.length ? `<div class="vw">⚠ ${esc(warn[0])}</div>` : ""}</div>`;
+  }
+
   function update() {
     save();
     const s = state,
@@ -923,7 +938,8 @@
 
     // step 3: one sheet per takeoff + the destination
     const sheets = [],
-      cards = [];
+      cards = [],
+      strip = [];
     let firstIssue = null,
       loading = false,
       incomplete = null,
@@ -967,6 +983,7 @@
       );
       const need = isD ? S.l.tot : Math.max(S.t.tod, S.l.tot);
       const ok = fin(need) && fin(S.lenN) ? need <= S.lenN && !warn.length : null;
+      if (res) strip.push(stripRow(S, idx, need, ok, warn));
       setHTML(
         "sum-" + p,
         res && fin(need) && fin(S.lenN)
@@ -994,6 +1011,8 @@
       renderRunways(p);
       renderStatus(p, AUTO.filter((k) => s.edited[`${p}.${k}`]).length);
     });
+
+    setHTML("vstrip", strip.join(""));
 
     // guidance: the first thing still missing
     // Each todo: banner text, short text for the phone action bar, and the field to jump to
@@ -1611,9 +1630,38 @@
     changed();
   }
   const blankState = () => Object.assign({}, DEFAULTS, { date: today() });
-  // Replace the form with a stored calculation: as a result (free) or as a draft template.
-  function loadInputs(inputs, row, asResult) {
-    const st = Snapshot.fromCanonical(inputs);
+
+  // Return flight: the same flight the other way round, as a state map (input: Snapshot.fromCanonical output).
+  // Stops are reversed and per-point keys follow their airport (L<i> = stop i, D = last stop); the legs' flight time
+  // and trip fuel follow their leg (leg i <-> leg n-2-i); ground time follows its stop. Airport/runway/weather values,
+  // fetch bookkeeping, edited flags, slope, mass overrides and refuel amounts are dropped (different runway, weather
+  // must be refetched, refuel meaning flips). Date stays, time is cleared. People, fuel, BEM, reg, trim stay.
+  function reverseRoute(st) {
+    const n = Math.max(1, parseInt(st.nR, 10) || 1),
+      legs = n - 1,
+      out = {};
+    Object.keys(st).forEach((k) => {
+      if (!/^(L\d+|D)\./.test(k) && !/^R\d+$/.test(k) && k !== "edited") out[k] = st[k];
+    });
+    out.nR = n;
+    for (let i = 0; i < n; i++) out["R" + i] = st["R" + (n - 1 - i)] || "";
+    out.time = "";
+    out.edited = {};
+    const copy = (from, to, k) => {
+      if (st[`${from}.${k}`] !== undefined) out[`${to}.${k}`] = st[`${from}.${k}`];
+    };
+    for (let i = 0; i < legs; i++) ["dur", "trip"].forEach((k) => copy("L" + i, "L" + (legs - 1 - i), k));
+    for (let i = 0; i < n; i++) {
+      const from = i < legs ? "L" + i : "D",
+        to = n - 1 - i < legs ? "L" + (n - 1 - i) : "D";
+      copy(from, to, "eflaps");
+      if (from !== "D" && to !== "D") copy(from, to, "ac");
+      if (i > 0 && i < n - 1) copy(from, to, "gnd");
+    }
+    return out;
+  }
+  // Replace the form with a stored calculation's state: as a result (free) or as a draft (template / return flight).
+  function loadInputs(st, row, asResult, ret) {
     Object.keys(state).forEach((k) => delete state[k]);
     Object.assign(state, DEFAULTS, st, { edited: {} });
     if (asResult) {
@@ -1639,8 +1687,10 @@
     bemNote(regVal());
     update();
     changed();
+    if (ret) toast(`Return flight: ${stop(0)} → ${stop(nStops() - 1)} – set the departure time`);
   }
-  async function useCalc(id, asResult) {
+  // how: "open" (result), "tpl" (draft template) or "ret" (draft, route reversed)
+  async function useCalc(id, how) {
     let row;
     try {
       // own calculations only (admins could read everyone's; that view lives in admin.html)
@@ -1649,41 +1699,89 @@
       return toast("Could not load that calculation: " + String((e && e.message) || e));
     }
     if (!row || !row.inputs) return toast("Calculation not found");
-    if (!isRes() && Snapshot.fingerprint(state) !== Snapshot.fingerprint(blankState()) && Snapshot.fingerprint(state) !== Snapshot.fingerprint(Snapshot.fromCanonical(row.inputs))) {
+    let st = Snapshot.fromCanonical(row.inputs);
+    if (how === "ret") st = reverseRoute(st);
+    if (!isRes() && Snapshot.fingerprint(state) !== Snapshot.fingerprint(blankState()) && Snapshot.fingerprint(state) !== Snapshot.fingerprint(st)) {
       const ok = await dialog(
-        `<h3 id="{ID}">Replace what you entered?</h3><p>The form has values that are not saved as a calculation. Loading calculation #${esc(row.id)} replaces them.</p>
+        `<h3 id="{ID}">Replace what you entered?</h3><p>The form has values that are not saved as a calculation. Loading calculation #${esc(row.id)}${how === "ret" ? " as a return flight" : ""} replaces them.</p>
         <div class="btns"><button type="button" data-v="no">Keep mine</button><button type="button" class="pri" data-v="yes">Replace</button></div>`,
       );
       if (ok !== "yes") return;
     }
-    loadInputs(row.inputs, row, asResult);
+    loadInputs(st, row, how === "open", how === "ret");
+  }
+  // "2 h ago" for the history (the absolute time goes in the title)
+  function relTime(iso, now = Date.now()) {
+    const t = new Date(iso).getTime();
+    if (isNaN(t)) return "";
+    const m = Math.floor((now - t) / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m} min ago`;
+    if (m < 1440) return `${Math.floor(m / 60)} h ago`;
+    if (m < 14400) return `${Math.floor(m / 1440)} d ago`;
+    return new Date(t).toLocaleDateString([], { dateStyle: "medium" });
+  }
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  // flight date -> group heading: Today / Tomorrow / Yesterday / "Thu 20 Nov 2026"; none -> "No date"
+  function dayHeading(d, base = today()) {
+    const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(d || "");
+    if (!m) return "No date";
+    const day = (x) => Date.UTC(+x[1], +x[2] - 1, +x[3]) / 864e5,
+      diff = day(m) - day(/^(\d{4})-(\d\d)-(\d\d)$/.exec(base));
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Tomorrow";
+    if (diff === -1) return "Yesterday";
+    return `${DOW[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()]} ${+m[3]} ${MON3[+m[2] - 1]} ${m[1]}`;
+  }
+  function histRows(rows, q) {
+    q = String(q || "").trim().toLowerCase().replace(/^#/, "");
+    const hit = rows.filter((r) => !q || [r.route, r.reg, String(r.id)].some((x) => String(x || "").toLowerCase().includes(q)));
+    if (!hit.length) return `<p class="hempty">${rows.length ? "No calculation matches your search." : "No calculations yet."}</p>`;
+    const groups = new Map();
+    hit.forEach((r) => {
+      const k = r.flight_date || "";
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    });
+    const keys = [...groups.keys()].sort((a, b) => (!a ? 1 : !b ? -1 : a < b ? 1 : -1)); // dates newest first, "No date" last
+    return keys
+      .map((k) => {
+        const g = groups.get(k).sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+        return `<h4 class="hgrp">${esc(dayHeading(k))}</h4><ul class="hist">${g
+          .map(
+            (r) => `<li><span class="hmeta"><b>${esc(String(r.route || "–").split("-").join(" → "))}</b>${r.dep_time ? " · " + esc(r.dep_time) : ""} · ${esc(r.reg || "–")} · #${r.id}<br>calculated <span title="${esc(fmtStamp(r.created_at))}">${esc(relTime(r.created_at) || fmtStamp(r.created_at))}</span></span>
+            <span class="hbtn"><button type="button" data-v="open:${r.id}">Open</button><button type="button" data-v="tpl:${r.id}">Use as template</button><button type="button" data-v="ret:${r.id}">Return flight</button></span></li>`,
+          )
+          .join("")}</ul>`;
+      })
+      .join("");
   }
   async function openHistory() {
-    const body = (d, html) => (d.querySelector("#histBody").innerHTML = html);
+    const list = (d, html) => (d.querySelector("#histList").innerHTML = html);
     const v = await dialog(
-      `<h3 id="{ID}">History</h3><div id="histBody" aria-live="polite">Loading…</div>
+      `<h3 id="{ID}">History</h3><input type="search" id="histQ" placeholder="Search route, registration or #number" aria-label="Search history by route, registration or number" autocomplete="off" disabled>
+      <div id="histList" aria-live="polite">Loading…</div>
       <div class="btns"><button type="button" data-v="close">Close</button></div>`,
       async (d) => {
+        const q = d.querySelector("#histQ");
+        const phone = phoneMq && phoneMq.matches;
+        if (phone) d.querySelector("[data-v=close]").focus(); // no on-screen keyboard popping up
         try {
-          const rows = await Auth.rest(`/calculations?user_id=eq.${profile.id}&select=id,created_at,flight_date,dep_time,route,reg&order=created_at.desc&limit=50`);
-          if (!rows || !rows.length) return body(d, "<p>No calculations yet. Each calculation you run is listed here.</p>");
-          body(
-            d,
-            `<ul class="hist">${rows
-              .filter((r) => /^\d+$/.test(String(r.id)))
-              .map(
-                (r) => `<li><span class="hmeta"><b>${esc(r.route || "–")}</b> · ${esc(r.reg || "–")}<br>${esc(fmtDate(r.flight_date) || "no date")} ${esc(r.dep_time || "")} · calculated ${esc(fmtStamp(r.created_at))}</span>
-                <button type="button" data-v="open:${r.id}">Open</button><button type="button" data-v="tpl:${r.id}">Use as template</button></li>`,
-              )
-              .join("")}</ul>`,
-          );
+          const rows = (await Auth.rest(`/calculations?user_id=eq.${profile.id}&select=id,created_at,flight_date,dep_time,route,reg&order=created_at.desc&limit=50`)) || [];
+          const ok = rows.filter((r) => /^\d+$/.test(String(r.id)));
+          if (!ok.length) return list(d, "<p>No calculations yet. Each calculation you run is listed here.</p>");
+          q.disabled = false;
+          if (!phone) q.focus();
+          const draw = () => list(d, histRows(ok, q.value));
+          q.addEventListener("input", draw);
+          draw();
         } catch (e) {
-          body(d, `<p class="bad">Could not load the history: ${esc(String((e && e.message) || e))}</p>`);
+          list(d, `<p class="bad">Could not load the history: ${esc(String((e && e.message) || e))}</p>`);
         }
       },
     );
-    const m = /^(open|tpl):(\d+)$/.exec(v || "");
-    if (m) useCalc(m[2], m[1] === "open");
+    const m = /^(open|tpl|ret):(\d+)$/.exec(v || "");
+    if (m) useCalc(m[2], m[1]);
   }
   byId("histBtn").addEventListener("click", openHistory);
   byId("signout").addEventListener("click", () => Auth.signOut());
@@ -1709,6 +1807,7 @@
     noserver,
     points: () => points().map((p) => ({ p, icao: aptOf(p), landing: p === "D" })),
     get: (k) => state[k],
+    reverseRoute,
     pv,
     // write a fetched value; a value the user typed is left alone
     setAuto(p, k, v) {
