@@ -174,8 +174,11 @@
   const stepIn = (n, title) =>
     `<span class="num">${n}</span>${title}<span class="tick" id="tick${n}"></span>`;
   const step = (n, title) => `<h2>${stepIn(n, title)}</h2>`;
+  // finished steps 1 and 2 collapse to this one-line summary (CSS only: the inputs stay in the DOM)
+  const sumBtn = (n) =>
+    `<button type="button" class="sumbtn" id="sumbtn${n}" data-step="${n}" aria-expanded="false" hidden><span class="num">${n}</span><span class="sumtxt"></span><span class="tick">✓</span><span class="chg" aria-hidden="true">Edit</span></button>`;
   $("#steps").innerHTML = `
-    <section class="card">${step(1, "Flight")}
+    <section class="card" id="step1" data-step="1">${sumBtn(1)}${step(1, "Flight")}
       <div class="fg">
         <div class="wide"><span class="lbl">Route – every airport you take off from or land at</span><div class="route" id="route"></div></div>
         ${control("date", "Date", "d")}
@@ -185,7 +188,7 @@
         <div class="wide bemnote" id="bemNote"></div>
       </div>
     </section>
-    <section class="card">${step(2, "People &amp; fuel")}
+    <section class="card" id="step2" data-step="2">${sumBtn(2)}${step(2, "People &amp; fuel")}
       <div class="fg">
         ${control("w1", "Seat 1 / pilot", "n", "", "lb")}${control("w2", "Seat 2", "n", "", "lb")}
         ${control("w3", "Seat 3", "n", "", "lb")}${control("w4", "Seat 4", "n", "", "lb")}
@@ -202,13 +205,7 @@
       </div></details>
     </section>
     <h2 class="sech">${stepIn(3, "Check each takeoff and the landing")}</h2>
-    <div id="legs"></div>
-    <section class="card">${step(4, "Print")}
-      <div class="fg">
-        <button type="button" class="pri" data-act="download">Download PDF</button>
-        <button type="button" data-act="print">Open to print</button>
-      </div>
-    </section>`;
+    <div id="legs"></div>`;
   $("#lists").innerHTML =
     `<datalist id="latlist">${Object.values(LAT)
       .map((a) => `<option value="${a.icao}">${esc(a.name)} · ${a.solo ? "solo" : "dual only"}</option>`)
@@ -762,9 +759,6 @@
         : "",
     );
     setHTML("mwarn", massW.map(li).join(""));
-    $("#sum").textContent = fin(L.tom)
-      ? `ZFM ${Math.round(L.zfm)} · TOM ${Math.round(L.tom)} · LM ${r0(LW.lm)} lb`
-      : "";
     setHTML(
       "sameSum",
       esc(
@@ -781,7 +775,8 @@
     const sheets = [];
     let firstIssue = null,
       loading = false,
-      incomplete = null;
+      incomplete = null,
+      incompleteId = null;
     points().forEach((p, idx) => {
       const isD = p === "D";
       const S = sheetData(p, isD ? LW.lm : LW.legs[idx].tow);
@@ -807,7 +802,10 @@
       ];
       if (warn.length && !firstIssue) firstIssue = `${name}: ${warn[0]}`;
       if (busy[p]) loading = true;
-      if (S.missing.length && !incomplete) incomplete = name;
+      if (S.missing.length && !incomplete) {
+        incomplete = name;
+        incompleteId = `${p}.${S.missing[0]}`;
+      }
       setHTML(
         "lwarn-" + p,
         warn.map(li).join("") +
@@ -846,39 +844,57 @@
     });
 
     // guidance: the first thing still missing
-    const routeBad = [...Array(nStops()).keys()].some((i) => !validCode(stop(i)));
-    const todo1 = routeBad
-      ? "Enter the route: the airports you take off from and land at."
-      : !noserver && !s.time
-        ? "Set the departure time – airport and weather data then load automatically."
-        : !String(s.reg).trim()
-          ? "Enter the aircraft registration."
-          : null;
-    const todo2 =
+    // Each todo: banner text, short text for the phone action bar, and the field to jump to
+    const T = (msg, short, id) => ({ msg, short, id });
+    const badStop = [...Array(nStops()).keys()].findIndex((i) => !validCode(stop(i)));
+    const t1 =
+      badStop >= 0
+        ? T("Enter the route: the airports you take off from and land at.", "Enter the route", "R" + badStop)
+        : !noserver && !s.time
+          ? T("Set the departure time – airport and weather data then load automatically.", "Set the departure time", "time")
+          : !String(s.reg).trim()
+            ? T("Enter the aircraft registration.", "Enter the aircraft registration", "reg")
+            : null;
+    const t2 =
       !fin(num(s.bem)) || !fin(num(s.bemCg))
-        ? "Enter BEM and CG from the weight report (under “Usually the same”)."
+        ? T("Enter BEM and CG from the weight report (under “Usually the same”).", "Enter BEM and CG", fin(num(s.bem)) ? "bemCg" : "bem")
         : !(num(s.w1) > 0)
-          ? "Enter the pilot weight (seat 1)."
+          ? T("Enter the pilot weight (seat 1).", "Enter the pilot weight", "w1")
           : !(num(s.fuelTO) > 0)
-            ? "Enter the take-off fuel."
-            : massW[0] || null;
-    const todo3 = loading
-      ? "Loading airport and weather…"
+            ? T("Enter the take-off fuel.", "Enter the take-off fuel", "fuelTO")
+            : massW[0]
+              ? T(massW[0], "Check the masses", "w1")
+              : null;
+    const t3 = loading
+      ? T("Loading airport and weather…", "Loading airport and weather…", null)
       : incomplete
-        ? `${incomplete}: runway or weather values are missing – ${noserver ? "enter them" : "press ↻ refresh or enter them"} under “Edit runway & weather values”.`
-        : firstIssue;
+        ? T(
+            `${incomplete}: runway or weather values are missing – ${noserver ? "enter them" : "press ↻ refresh or enter them"} under “Edit runway & weather values”.`,
+            `${incomplete}: enter runway & weather values`,
+            incompleteId,
+          )
+        : firstIssue
+          ? T(firstIssue, "", null)
+          : null;
+    const todo1 = t1 && t1.msg,
+      todo2 = t2 && t2.msg,
+      todo3 = t3 && t3.msg;
     const msg = todo1 || todo2 || todo3;
     const kind = !msg ? "ok" : todo1 || (todo2 && todo2 !== massW[0]) || loading ? "todo" : "warn";
     // Calculate is offered once nothing required is missing (limit warnings do not block it)
     const canCalc = !todo1 && !(todo2 && todo2 !== massW[0]) && !loading && !incomplete;
-    cur = { sheets, L, LW, canCalc, massW };
+    const need = t1 || (t2 && t2.msg !== massW[0] ? t2 : null) || t3;
+    cur = { sheets, L, LW, canCalc, massW, target: need && need.id };
     let bannerKind = kind;
+    const pdfOff = res && lastBytes ? "" : " disabled";
+    let bar = "";
     if (res) {
       bannerKind = "ok";
       setHTML(
         "next",
-        `<b>Result</b> Calculation #${esc(s.calcId)} · ${esc(fmtStamp(s.calcAt))} · tokens left ${tokens()} <button type="button" id="editBtn">Edit</button><button type="button" id="newBtn">New flight</button>`,
+        `<b>Result</b> Calculation #${esc(s.calcId)} · ${esc(fmtStamp(s.calcAt))} · tokens left ${tokens()}<div class="acts"><button type="button" class="pri" data-act="download"${pdfOff}>Download PDF</button><button type="button" data-act="print"${pdfOff}>Open to print</button><button type="button" id="editBtn" data-m="edit">Edit</button><button type="button" id="newBtn" data-m="new">New flight</button></div>`,
       );
+      bar = `<button type="button" class="pri" data-act="download"${pdfOff}>Download PDF</button><button type="button" data-m="edit">Edit</button>`;
     } else if (canCalc) {
       const none = tokens() < 1;
       bannerKind = none || notice || msg ? "warn" : "ok";
@@ -887,15 +903,32 @@
         : notice || msg || "Ready – check the weather values, then calculate";
       setHTML(
         "next",
-        `<b>${bannerKind === "ok" ? "Ready" : "Check"}</b> ${esc(text)}<button type="button" class="pri" id="calcBtn"${none || pending ? " disabled" : ""}>${pending ? "Calculating…" : "Calculate (1 token)"}</button>`,
+        `<b>${bannerKind === "ok" ? "Ready" : "Check"}</b> ${esc(text)}<button type="button" class="pri" id="calcBtn" data-m="calc"${none || pending ? " disabled" : ""}>${pending ? "Calculating…" : "Calculate (1 token)"}</button>`,
       );
+      bar = `<button type="button" class="pri" data-m="calc"${none || pending ? " disabled" : ""}>${pending ? "Calculating…" : "Calculate (1 token)"}</button>`;
     } else {
       setHTML("next", `<b>${kind === "warn" ? "Check" : "Next"}</b> ${esc(msg)}${notice ? `<span class="note">${esc(notice)}</span>` : ""}`);
+      const bt = (need && need.short) || "Complete the form";
+      bar = `<button type="button" data-m="todo" title="${esc(need ? need.msg : "")}"${need && need.id ? "" : " disabled"}>${esc(bt.length > 52 ? bt.slice(0, 51) + "…" : bt)}</button>`;
     }
+    setHTML("mbar", bar);
     byId("next").className = bannerKind;
     [todo1, todo2, todo3].forEach((t, i) => {
       byId("tick" + (i + 1)).textContent = t ? "" : "✓";
     });
+    // steps 1 and 2: summary line and whether they may collapse (complete, no missing value, no mass warning)
+    const dts = fmtDay(s.date);
+    stepInfo = {
+      1: {
+        done: !todo1,
+        text: [[...Array(nStops()).keys()].map(stop).join(" → "), [dts, s.time].filter(Boolean).join(" "), String(s.reg).trim().toUpperCase()].filter(Boolean).join(" · "),
+      },
+      2: {
+        done: !todo2,
+        text: [`Pilot ${s.w1 || "–"}`, `${occ} POB`, `${s.fuelTO || 0} USG`, fin(L.tom) ? `TOM ${Math.round(L.tom)} lb` : ""].filter(Boolean).join(" · "),
+      },
+    };
+    applyCollapse();
     syncChrome();
 
     // The single gate: the PDF is only built and previewed for a calculated result.
@@ -924,29 +957,154 @@
   }
 
   /* ---------- account chrome, locking, toast ---------- */
-  let cur = null; // last computed sheets, for the confirm dialog
+  let cur = null; // last computed sheets, for the confirm dialog (+ the field the phone bar jumps to)
+  let stepInfo = null; // steps 1 and 2: { done, text } from the last update()
   const fmtStamp = (iso) => {
     const d = new Date(iso);
     return isNaN(d) ? String(iso || "") : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  };
+  const initials = (n) => {
+    const w = String(n || "").split(/[\s.@_-]+/).filter(Boolean);
+    return w.length ? (w[0][0] + (w.length > 1 ? w[1][0] : "")).toUpperCase() : "?";
+  };
+  const MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const fmtDay = (d) => {
+    const m = /^\d{4}-(\d\d)-(\d\d)$/.exec(d || "");
+    return m ? `${+m[2]} ${MON3[+m[1] - 1]}` : "";
   };
   function syncChrome() {
     const t = tokens();
     const b = byId("tokens");
     b.textContent = `${t} token${t === 1 ? "" : "s"}`;
     b.className = "badge" + (t < 1 ? " low" : "");
-    byId("who").textContent = profile.name || profile.email || "";
+    const who = profile.name || profile.email || "";
+    byId("who").textContent = who;
+    byId("ini").textContent = initials(who);
+    byId("acctBtn").setAttribute("aria-label", `Account menu${who ? ", " + who : ""}`);
     byId("adminLink").hidden = profile.role !== "admin";
     const lock = isLocked(),
       res = isRes();
-    document.querySelectorAll("#steps input, #steps select, #steps textarea, #steps button").forEach((el) => {
-      el.disabled = el.matches("[data-act]") ? !(res && lastBytes) : lock;
+    // the collapsed-step summary buttons stay usable in result mode (they only expand the step)
+    document.querySelectorAll("#steps input, #steps select, #steps textarea, #steps button:not(.sumbtn)").forEach((el) => {
+      el.disabled = lock;
     });
-    document.querySelectorAll("header [data-act]").forEach((el) => {
+    document.querySelectorAll("[data-act]").forEach((el) => {
       el.disabled = !(res && lastBytes);
     });
     byId("reset").disabled = pending;
     byId("histBtn").disabled = pending;
   }
+
+  /* ---------- collapsing finished steps 1 and 2 (CSS only; the inputs stay in the DOM) ---------- */
+  const collapsed = { 1: false, 2: false }, // currently shown as a one-line summary
+    leftStep = { 1: false, 2: false }; // focus has been in this step and left it
+  let pressing = false; // a pointer is down inside step 1 or 2: no collapsing under the user's finger
+  const reducedMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function applyCollapse() {
+    if (!stepInfo) return;
+    [1, 2].forEach((n) => {
+      const info = stepInfo[n],
+        sec = byId("step" + n),
+        btn = byId("sumbtn" + n),
+        inside = sec.contains(document.activeElement);
+      if (!info.done || inside) {
+        // incomplete (also after loading a template) or being edited: always open
+        collapsed[n] = false;
+        leftStep[n] = false;
+      } else if (leftStep[n] && !pressing) collapsed[n] = true;
+      sec.classList.toggle("collapsed", collapsed[n]);
+      btn.hidden = !collapsed[n];
+      if (collapsed[n]) btn.querySelector(".sumtxt").textContent = info.text;
+    });
+  }
+  function expandStep(n, focus) {
+    collapsed[n] = false;
+    leftStep[n] = false;
+    applyCollapse();
+    if (!focus) return;
+    const first = byId(n === 1 ? "R0" : "w1"),
+      sec = byId("step" + n);
+    sec.tabIndex = -1; // lock mode: focus stays inside the step so it is not collapsed again at once
+    (first && !first.disabled ? first : sec).focus();
+  }
+  // Phone bar: jump to the field the todo is about (open its details, scroll, focus)
+  function focusField(id) {
+    const el = id && byId(id);
+    if (!el || isLocked()) return;
+    const sec = el.closest(".card[data-step]");
+    if (sec && collapsed[+sec.dataset.step]) expandStep(+sec.dataset.step, false);
+    for (let d = el.closest("details"); d; d = d.parentElement && d.parentElement.closest("details")) d.open = true;
+    el.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+    el.focus({ preventScroll: true });
+  }
+  document.addEventListener("pointerdown", (e) => {
+    const sec = e.target.closest && e.target.closest("#step1, #step2");
+    pressing = !!sec;
+    if (sec) leftStep[+sec.dataset.step] = false;
+  });
+  ["pointerup", "pointercancel"].forEach((ev) => document.addEventListener(ev, () => (pressing = false)));
+  document.addEventListener("focusout", (e) => {
+    const sec = e.target.closest && e.target.closest("#step1, #step2");
+    if (!sec) return;
+    setTimeout(() => {
+      // ignore: focus is still in the step, a pointer is pressing in it, or the field was just re-rendered away
+      if (pressing || !e.target.isConnected || sec.contains(document.activeElement)) return;
+      leftStep[+sec.dataset.step] = true;
+      applyCollapse();
+    }, 0);
+  });
+
+  /* ---------- account menu ---------- */
+  const acctBtn = byId("acctBtn"),
+    acctMenu = byId("acctMenu");
+  const menuItems = () => [...acctMenu.querySelectorAll("[role=menuitem]")].filter((el) => !el.hidden && !el.disabled);
+  const menuOpen = () => !acctMenu.hidden;
+  function openMenu() {
+    acctMenu.hidden = false;
+    acctBtn.setAttribute("aria-expanded", "true");
+    const it = menuItems();
+    if (it[0]) it[0].focus();
+  }
+  function closeMenu(refocus) {
+    if (!menuOpen()) return;
+    acctMenu.hidden = true;
+    acctBtn.setAttribute("aria-expanded", "false");
+    if (refocus) acctBtn.focus();
+  }
+  acctBtn.addEventListener("click", () => (menuOpen() ? closeMenu(true) : openMenu()));
+  acctBtn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!menuOpen()) openMenu();
+    }
+  });
+  // capture: the menu closes (focus back on the button) before the chosen item's own handler runs, so a dialog restores focus to the button
+  acctMenu.addEventListener("click", (e) => {
+    if (e.target.closest("[role=menuitem]")) closeMenu(true);
+  }, true);
+  acctMenu.addEventListener("keydown", (e) => {
+    const it = menuItems(),
+      i = it.indexOf(document.activeElement);
+    const go = (j) => {
+      e.preventDefault();
+      if (it.length) it[(j + it.length) % it.length].focus();
+    };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i < 0 ? it.length - 1 : i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(it.length - 1);
+    else if (e.key === "Escape") {
+      e.preventDefault();
+      closeMenu(true);
+    } else if (e.key === "Tab") closeMenu(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && menuOpen()) closeMenu(true);
+  });
+  document.addEventListener("click", (e) => {
+    if (menuOpen() && !e.target.closest(".menu")) closeMenu(false);
+  });
+
   let toastTimer = null;
   function toast(msg) {
     const el = byId("toast");
@@ -1109,9 +1267,17 @@
     const t = e.target;
     const a = t.closest("[data-act]");
     if (a) return act(a.dataset.act);
-    if (t.closest("#calcBtn")) return calculate();
-    if (t.closest("#editBtn")) return editInputs();
-    if (t.closest("#newBtn")) return byId("reset").click();
+    // banner and phone bar share these handlers
+    const m = t.closest("[data-m]");
+    if (m) {
+      const f = m.dataset.m;
+      if (f === "calc") return startCalculate();
+      if (f === "edit") return editResult();
+      if (f === "new") return newFlight();
+      if (f === "todo") return focusField(cur && cur.target);
+    }
+    const sb = t.closest(".sumbtn");
+    if (sb) return expandStep(+sb.dataset.step, true);
     if (isLocked()) return;
     if (t.closest("#addStop")) {
       const n = nStops();
@@ -1188,8 +1354,10 @@
     }
   });
   window.addEventListener("resize", schedule);
-  $("#reset").addEventListener("click", () => {
+  function newFlight() {
+    if (pending) return;
     notice = "";
+    collapsed[1] = collapsed[2] = leftStep[1] = leftStep[2] = false;
     Object.keys(state).forEach((k) => delete state[k]);
     Object.assign(state, DEFAULTS, { date: today(), edited: {} });
     fill($("#steps"));
@@ -1198,7 +1366,8 @@
     applyBem(regVal());
     update();
     changed();
-  });
+  }
+  byId("reset").addEventListener("click", newFlight);
 
   /* ---------- calculate (1 token), edit, history ---------- */
   function sourceOf(p) {
@@ -1206,7 +1375,7 @@
     if (!label) return "entered by you";
     return ["wdir", "wspd", "wgust", "qnh", "oat"].some((k) => state.edited[`${p}.${k}`]) ? `${label}, some values edited by you` : label;
   }
-  async function calculate() {
+  async function startCalculate() {
     if (pending || isRes() || !cur || !cur.canCalc || tokens() < 1) return;
     const { sheets, L, LW } = cur;
     const lines = sheets.map((S, i) => {
@@ -1256,7 +1425,7 @@
       update();
     }
   }
-  function editInputs() {
+  function editResult() {
     if (!isRes()) return;
     state.mode = "draft";
     delete state.calcId;

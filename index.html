@@ -2,16 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SR20 T/O &amp; Load Sheet</title>
 <style>
 :root{--bg:#eef1f5;--fg:#16202c;--card:#fff;--line:#c9d1db;--acc:#14305e}
 @media (prefers-color-scheme:dark){:root{--bg:#161a20;--fg:#e6ebf1;--card:#212832;--line:#38424f;--acc:#7fa6e6}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.35 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}
-header{display:flex;gap:10px;align-items:center;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
-h1{font-size:16px;margin:0;color:var(--acc)}
-#sum{margin-left:auto;font-variant-numeric:tabular-nums;opacity:.8}
+header{display:flex;gap:8px 12px;align-items:center;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:16px;margin:0;color:var(--acc);flex:1 1 auto}
+.hright{display:flex;gap:8px;align-items:center;margin-left:auto}
 button{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
 button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
 @media (prefers-color-scheme:dark){button.pri{color:#111}}
@@ -23,7 +23,7 @@ button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
 #next.warn{border-color:#c0392b}#next.warn b{background:#c0392b;color:#fff}
 #next.ok{border-color:#2e8b57}#next.ok b{background:#2e8b57;color:#fff}
 .card,.leg{background:var(--card);border:1px solid var(--line);border-radius:8px}
-.card{padding:10px 0 0}
+.card{padding:10px 0 0}.card:focus{outline:none}
 h2{font-size:14px;margin:0 12px 8px;display:flex;align-items:center;gap:8px}
 h2.sech{margin:8px 2px 0}
 .num{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--acc);color:#fff;font-size:12px;flex:none}
@@ -71,11 +71,27 @@ details.rw{border-top:1px solid var(--line)}details.rw summary{font-size:12px}
 #pages{min-width:0;display:flex;flex-direction:column;align-items:center;gap:16px}
 #pages canvas{background:#fff;box-shadow:0 2px 10px #0003;max-width:100%}
 body.booting{visibility:hidden}
-.acct{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.acct #who{font-size:12px;opacity:.8}
+.menu{position:relative}
+#acctBtn{display:flex;align-items:center;gap:6px;padding:3px 10px 3px 4px;border-radius:16px}
+#acctBtn .ini{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--acc);color:#fff;font-size:11px;font-weight:700}
+@media (prefers-color-scheme:dark){#acctBtn .ini{color:#111}}
+#who{font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#acctMenu{position:absolute;right:0;top:calc(100% + 4px);min-width:160px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px #0004;padding:4px;z-index:30;display:flex;flex-direction:column}
+#acctMenu[hidden]{display:none}
+#acctMenu [role=menuitem]{display:block;text-align:left;padding:8px 12px;border:0;border-radius:5px;background:none;color:var(--fg);text-decoration:none;font:inherit;cursor:pointer}
+#acctMenu [role=menuitem][hidden]{display:none}
+#acctMenu [role=menuitem]:hover,#acctMenu [role=menuitem]:focus-visible{background:var(--bg)}
+#acctMenu [role=menuitem]:focus-visible,#acctBtn:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .badge{padding:2px 9px;border-radius:10px;border:1px solid var(--line);font-weight:700;font-variant-numeric:tabular-nums}.badge.low{border-color:#c0392b;color:#c0392b}
-.acct a{color:var(--acc);font-weight:600}
 button:disabled{opacity:.5;cursor:default}
 #next button{margin:2px 0 2px 6px;padding:3px 12px}
+#next .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}#next .acts button{margin:0;padding:5px 12px}
+.sumbtn{display:none;width:100%;align-items:center;gap:8px;text-align:left;border:0;background:none;padding:2px 12px 10px;border-radius:8px}
+.sumbtn:not([hidden]){display:flex}
+.sumbtn .sumtxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sumbtn .chg{font-size:12px;color:var(--acc)}
+.card.collapsed{padding-top:10px}.card.collapsed>:not(.sumbtn){display:none}
+#mbar{display:none}
 #next .note{display:block;margin-top:3px;color:#b9770e}
 .ph{margin:40px 16px;opacity:.7;text-align:center}
 dialog{max-width:min(560px,calc(100vw - 24px));width:100%;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);padding:16px}
@@ -89,33 +105,42 @@ dialog .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-
 #toast[hidden]{display:none}
 @media (prefers-color-scheme:dark){#toast{color:#111}}
 .unavail{margin:60px auto;max-width:420px;padding:0 16px;text-align:center;font-size:16px}
-@media (max-width:900px){.app{grid-template-columns:1fr}#left{position:static;max-height:none}}
+@media (max-width:900px){.app{grid-template-columns:1fr}#left{position:static;max-height:none}
+:root{--mbar:60px}
+body{padding-bottom:calc(var(--mbar) + env(safe-area-inset-bottom,0px))}
+#mbar{display:flex;gap:8px;position:fixed;left:0;right:0;bottom:0;z-index:10;height:calc(var(--mbar) + env(safe-area-inset-bottom,0px));padding:8px 12px env(safe-area-inset-bottom,0px);background:var(--card);border-top:1px solid var(--line)}
+#mbar button{flex:1 1 0;min-width:0;min-height:44px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mbar button:first-child:last-child{flex-basis:100%}
+#toast{bottom:calc(var(--mbar) + env(safe-area-inset-bottom,0px) + 12px)}}
+@media (max-width:600px){#who{display:none}#acctBtn{padding-right:6px}}
 </style>
 </head>
 <body class="booting">
 <header>
   <h1>SR20 · T/O data sheet &amp; load sheet</h1>
-  <span id="sum"></span>
-  <button id="reset" title="Clear everything and start a new flight">New flight</button>
-  <button data-act="print" title="Opens the filled PDF in a new tab (after you calculate)" disabled>Open to print</button>
-  <button data-act="download" class="pri" disabled>Download PDF</button>
-  <span class="acct">
+  <div class="hright">
+    <button id="reset" type="button" title="Clear everything and start a new flight">New flight</button>
     <span id="tokens" class="badge" title="Calculation tokens left" aria-live="polite"></span>
-    <button id="histBtn" type="button">History</button>
-    <a id="adminLink" href="/admin.html" hidden>Admin</a>
-    <span id="who"></span>
-    <button id="signout" type="button">Sign out</button>
-  </span>
+    <div class="menu">
+      <button id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="acctMenu"><span class="ini" id="ini" aria-hidden="true"></span><span id="who"></span><span aria-hidden="true">▾</span></button>
+      <div id="acctMenu" role="menu" aria-label="Account" hidden>
+        <button id="histBtn" type="button" role="menuitem" tabindex="-1">History</button>
+        <a id="adminLink" href="/admin.html" role="menuitem" tabindex="-1" hidden>Admin</a>
+        <button id="signout" type="button" role="menuitem" tabindex="-1">Sign out</button>
+      </div>
+    </div>
+  </div>
 </header>
 <div class="app">
   <div id="left">
     <div id="next" role="status"></div>
     <div id="steps"></div>
     <div id="lists"></div>
-    <p style="font-size:11px;opacity:.75;margin:4px 2px"><b>Training aid only.</b> Verify every value against the THB, the POH and your aircraft's weight report before flight. One T/O data sheet per takeoff (its landing box is the emergency return to the same runway at T/O weight) and one for the landing at the destination. Your entries are saved in this browser only. BEM and CG come from the fleet table by registration. Airport limits and notes: THB Appendix A (07 APR 2026); elevations: FAA. Written onto LAT form 1002; tables from THB SR20 Rev 06, linear interpolation (takeoff and landing distances use the next higher table weight).</p>
+    <p style="font-size:11px;opacity:.75;margin:4px 2px"><b>Training aid only.</b> Verify every value against the THB, the POH and your aircraft's weight report before flight. One T/O data sheet per takeoff (its landing box is the emergency return to the same runway at T/O weight) and one for the landing at the destination. Your draft is saved in this browser; calculations are stored in your account. BEM and CG come from the fleet table by registration. Airport limits and notes: THB Appendix A (07 APR 2026); elevations: FAA. Written onto LAT form 1002; tables from THB SR20 Rev 06, linear interpolation (takeoff and landing distances use the next higher table weight).</p>
   </div>
   <div id="pages"></div>
 </div>
+<div id="mbar" aria-label="Quick action"></div>
 <div id="toast" role="status" hidden></div>
 <script src="/api/config.js"></script>
 <script src="/auth.js"></script>
