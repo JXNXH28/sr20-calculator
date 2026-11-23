@@ -32,7 +32,8 @@ minus the fuel burned on earlier legs (or ZFM + refuelled fuel). Density altitud
 to whole °C.
 
 The draft you are entering is saved in this browser's localStorage. A flight saved on an earlier day keeps route,
-people and settings; its date, time and weather are cleared.
+people and settings; its date, time and weather are cleared. "New flight" keeps seat weights, baggage, trim, name, the
+variable-wind setting and the sheet method. In a browser without a saved draft these come from your latest calculation.
 
 ## Accounts and tokens
 Sign-in is required (Supabase Auth; accounts by admin invite only). **1 token = 1 calculation**:

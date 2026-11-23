@@ -109,7 +109,8 @@
     if (o.fuelTrip !== undefined) s["L0.trip"] = o.fuelTrip;
     return s;
   }
-  const state = Object.assign({}, DEFAULTS, lsGet(KEY) || migrate(lsGet(OLDKEY)) || {});
+  const savedDraft = lsGet(KEY) || migrate(lsGet(OLDKEY));
+  const state = Object.assign({}, DEFAULTS, savedDraft || {});
   if (!state.edited || typeof state.edited !== "object") state.edited = {};
   const FETCHED = new RegExp(`^(L\\d+|D)\\.(${[...AUTO, ...META, "time"].join("|")})$`);
   function clearFetched() {
@@ -1602,12 +1603,21 @@
     }
   });
   window.addEventListener("resize", schedule);
+  // People and settings that carry over to the next flight. BEM/CG are per registration (fleet table), so not here.
+  const USUAL = ["w1", "w2", "w3", "w4", "bag", "trim", "prep", "vrbWorst", "sheetMode"];
   function newFlight() {
     if (pending) return;
     notice = "";
     collapsed[1] = collapsed[2] = leftStep[1] = leftStep[2] = false;
+    const keep = {};
+    USUAL.forEach((k) => {
+      if (state[k] !== undefined) keep[k] = state[k];
+    });
     Object.keys(state).forEach((k) => delete state[k]);
-    Object.assign(state, DEFAULTS, { date: today(), edited: {} });
+    Object.assign(state, DEFAULTS, keep, { date: today(), edited: {} });
+    refreshForm();
+  }
+  function refreshForm() {
     fill($("#steps"));
     renderRoute();
     renderLegs();
@@ -1616,6 +1626,30 @@
     changed();
   }
   byId("reset").addEventListener("click", newFlight);
+
+  // No draft in this browser yet (new device, cleared data): take the usual values from the latest calculation.
+  // Only fields still at their default are filled, so nothing typed meanwhile is overwritten.
+  async function prefillFromLatest() {
+    try {
+      const rows = await Auth.rest(
+        `/calculations?user_id=eq.${profile.id}&select=inputs&order=created_at.desc&limit=1`,
+      );
+      if (!rows || !rows[0] || !rows[0].inputs || isRes()) return;
+      const last = Snapshot.fromCanonical(rows[0].inputs);
+      let n = 0;
+      USUAL.forEach((k) => {
+        if (last[k] === undefined || state[k] !== DEFAULTS[k]) return;
+        if (last[k] !== state[k]) n++;
+        state[k] = last[k];
+      });
+      if (!n) return;
+      refreshForm();
+      toast("Seat weights and usual settings taken from your last calculation");
+    } catch (e) {
+      /* offline or no history: keep the defaults */
+    }
+  }
+  if (!savedDraft) prefillFromLatest();
 
   /* ---------- calculate (1 token), edit, history ---------- */
   function sourceOf(p) {
