@@ -152,4 +152,18 @@ same('snapshot removed stop leaks nothing', chg({ nR: 2, R2: 'KGYR' }), chg({ nR
   const cl = Sn.canonical(chg({ bag: '', 'L0.dur': '' })), rt2 = fp(Sn.fromCanonical(cl)) === JSON.stringify(Sn.sortKeys(cl)) && !('bag' in cl) && !('L0.dur' in cl);
   if (!rt2) fail++; console.log((rt2 ? 'ok   ' : 'FAIL ') + 'snapshot round trip keeps cleared defaults');
 }
+same('snapshot sheetMode lat = absent', base, chg({ sheetMode: 'lat' }));
+diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
+{
+  const cl = Sn.canonical(chg({ sheetMode: 'lat' })), cp = Sn.canonical(chg({ sheetMode: 'pair' }));
+  const ok = !('sheetMode' in cl) && cp.sheetMode === 'pair' && Sn.fromCanonical(cp).sheetMode === 'pair' && Sn.fromCanonical(cl).sheetMode === 'lat'
+    && fp(Sn.fromCanonical(cp)) === JSON.stringify(Sn.sortKeys(cp));
+  if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + 'snapshot sheetMode round trip');
+}
+// per-leg landing mass (as in app.js legLm): ZFM + (fuel at takeoff - trip) x lb/USG; last leg = legWeights lm
+{
+  const lw2 = P.legWeights(2500, 40, [{ trip: 10 }, { trip: 8 }]);
+  const legLm = (i, trip) => 2500 + (lw2.legs[i].fuel - trip) * P.LB_PER_USG;
+  eq('leg1 landing mass', legLm(0, 10), 2500 + 30 * P.LB_PER_USG); eq('last leg landing mass = lm', legLm(1, 8), lw2.lm);
+}
 console.log(fail ? fail + ' FAILED' : 'ALL PASS'); process.exit(fail ? 1 : 0);

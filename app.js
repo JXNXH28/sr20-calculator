@@ -202,6 +202,10 @@
         ${control("prep", "Prepared by", "t", "", "your name")}<span></span>
         ${control("bem", "Basic empty mass (lb)", "n", "", "from fleet")}${control("bemCg", "BEM CG (in)", "n", "", "from fleet")}
         <div class="wide">${control("vrbWorst", "Variable wind: assume worst case (full tailwind + crosswind)", "c")}</div>
+        <div class="wide">${control("sheetMode", "T/O data sheets", "s", [
+          ["lat", "One per takeoff + destination landing (standard)"],
+          ["pair", "Two per takeoff: immediate return + arrival (remarks KGYR-KGYR / KGYR-KBXK)"],
+        ])}</div>
       </div></details>
     </section>
     <div id="preSlot"></div>
@@ -302,15 +306,10 @@
   }
   const side = (v) => (v >= 0 ? "R" : "L");
 
-  /* ---------- one sheet ---------- */
-  // Takeoff point: T/O at that leg's mass; landing box = emergency return to the same runway at T/O mass.
-  // Destination: everything at landing mass; landing box = the normal landing there.
-  function sheetData(p, mass) {
-    const isD = p === "D";
-    const g = (k) => pv(p, k);
-    const n = (k) => num(g(k));
-    const tow = isD ? (fin(n("ewt")) ? n("ewt") : mass) : fin(n("tow")) ? n("tow") : mass;
-    const common = {
+  // Weather / runway conditions of point q, as the performance functions take them.
+  function condOf(q) {
+    const n = (k) => num(pv(q, k));
+    return {
       vrbWorst: state.vrbWorst,
       elev: n("elev"),
       qnh: n("qnh"),
@@ -321,23 +320,43 @@
       hdg: n("hdg"),
       len: n("len"),
       slope: n("slope"),
-      surf: g("surf"),
+      surf: pv(q, "surf"),
     };
-    const t = P.takeoff(Object.assign({ tow, ac: !isD && g("ac") }, common));
-    const ldw = isD ? tow : fin(n("ewt")) ? n("ewt") : tow;
-    const flaps = parseInt(g("eflaps"), 10);
-    const l = P.landing(Object.assign({ flaps, w: ldw }, common));
+  }
+  // Landing box of a T/O data sheet: landing at point q's runway and weather, at mass w, with q's landing flaps.
+  function landingBox(q, w) {
+    const flaps = parseInt(pv(q, "eflaps"), 10);
+    const rwy = String(pv(q, "rwy") || "").trim();
+    return {
+      l: P.landing(Object.assign({ flaps, w }, condOf(q))),
+      ldw: w,
+      lflaps: flaps,
+      llen: num(pv(q, "len")),
+      lapt: [aptOf(q), rwy].filter(Boolean).join(" "),
+    };
+  }
+
+  /* ---------- one sheet ---------- */
+  // Takeoff point: T/O at that leg's mass; landing box = emergency return to the same runway at T/O mass.
+  // Destination: everything at landing mass; landing box = the normal landing there.
+  function sheetData(p, mass) {
+    const isD = p === "D";
+    const g = (k) => pv(p, k);
+    const n = (k) => num(g(k));
+    const tow = isD ? (fin(n("ewt")) ? n("ewt") : mass) : fin(n("tow")) ? n("tow") : mass;
+    const t = P.takeoff(Object.assign({ tow, ac: !isD && g("ac") }, condOf(p)));
+    const lb = landingBox(p, isD ? tow : fin(n("ewt")) ? n("ewt") : tow);
     const apt = aptOf(p),
       rwy = String(g("rwy") || "").trim();
     return {
       p,
       isD,
       t,
-      l,
-      ldw,
-      lflaps: flaps,
-      llen: n("len"),
-      lapt: [apt, rwy].filter(Boolean).join(" "),
+      l: lb.l,
+      ldw: lb.ldw,
+      lflaps: lb.lflaps,
+      llen: lb.llen,
+      lapt: lb.lapt,
       dateac: [fmtDate(state.date), state.reg].filter(Boolean).join(" / "),
       apt,
       elev: g("elev") === "" ? "" : Math.round(n("elev")) + " ft",
@@ -626,6 +645,21 @@
     return m ? `${m[3]} ${MON[+m[2] - 1]} ${m[1].slice(2)}` : d || "";
   }
 
+  // Sheets as printed. Standard: as computed. Pair mode: every takeoff sheet twice, identical except the landing box and
+  // the remarks (first line = route tag): immediate return "DEP-DEP" (landing box as in the takeoff sheet), arrival "DEP-ARR".
+  const joinRemarks = (tag, rem) => [tag, String(rem || "").trim()].filter(Boolean).join("\n");
+  function pdfSheets(sheets) {
+    if (state.sheetMode !== "pair") return sheets;
+    const out = [];
+    sheets.forEach((S) => {
+      if (S.isD || !S.arr) return;
+      const dep = aptOf(S.p);
+      out.push({ ...S, remarks: joinRemarks(`${dep}-${dep}`, S.remarks) });
+      out.push({ ...S, ...S.arr.box, remarks: joinRemarks(`${dep}-${S.arr.apt}`, S.remarks) });
+    });
+    return out;
+  }
+
   // ceil(n/2) copies of the T/O page (two sheets each), then the load sheet.
   async function buildPdf(s, L, sheets, occ) {
     const bin = atob(window.FORM_PDF_B64);
@@ -885,9 +919,11 @@
       where = [S.apt, S.rwy && "RWY " + S.rwy].filter(Boolean).join(" ") || "–",
       len = fin(S.lenN) ? r0(S.lenN) : "–",
       spareTxt = !known ? "– % spare" : spare >= 0 ? `${Math.round(spare * 100)} % spare` : `${r10(need - S.lenN)} ft too long`,
-      lines = S.isD ? [`${dist(S.l.tot)} of ${len} ft · ${spareTxt}`] : [`T/O ${dist(S.t.tod)} of ${len} ft · ${spareTxt}`, `emergency landing ${dist(S.l.tot)} ft`];
+      lines = S.isD ? [`${dist(S.l.tot)} of ${len} ft · ${spareTxt}`] : [`T/O ${dist(S.t.tod)} of ${len} ft · ${spareTxt}`, `emergency landing ${dist(S.l.tot)} ft`],
+      arrOver = S.arr && fin(S.arr.box.l.tot) && fin(S.arr.box.llen) && S.arr.box.l.tot > S.arr.box.llen;
+    if (S.arr) lines.push(`landing ${S.arr.apt} ${dist(S.arr.box.l.tot)} of ${fin(S.arr.box.llen) ? r0(S.arr.box.llen) : "–"} ft`);
     return `<div class="vrow ${ok === null ? "na" : ok ? "ok" : "no"}"><div class="vh"><b>${S.isD ? "Landing" : "Leg " + (idx + 1)} · ${esc(where)}</b><span class="vst">${ok === null ? "–" : ok ? "✓ OK" : "⚠ check"}</span></div>
-      ${lines.map((x) => `<div class="vl">${esc(x)}</div>`).join("")}
+      ${lines.map((x, i) => `<div class="vl"${S.arr && i === lines.length - 1 && arrOver ? ' style="color:var(--vno)"' : ""}>${esc(x)}</div>`).join("")}
       <div class="vbar" aria-hidden="true"><i style="width:${known ? Math.min(100, Math.max(0, (need / S.lenN) * 100)).toFixed(1) : 0}%"></i></div>
       ${warn.length ? `<div class="vw">⚠ ${esc(warn[0])}</div>` : ""}</div>`;
   }
@@ -913,6 +949,14 @@
       });
     const LW = P.legWeights(load(0).zfm, num(s.fuelTO), legsIn);
     const L = load(LW.loadTrip);
+    const pair = s.sheetMode === "pair";
+    // Landing mass at the end of leg i = ZFM + (fuel at its takeoff - its trip fuel) x lb/USG; point D's landing mass override wins for the last leg.
+    const zfm0 = load(0).zfm;
+    const legLm = (i) => {
+      const trip = fin(legsIn[i].trip) ? legsIn[i].trip : 0;
+      const lm = zfm0 + (LW.legs[i].fuel - trip) * P.LB_PER_USG;
+      return i === nLegs() - 1 && fin(num(pv("D", "ewt"))) ? num(pv("D", "ewt")) : lm;
+    };
     const occ = [s.w1, s.w2, s.w3, s.w4].filter((v) => num(v) > 0).length;
 
     // step 2: masses
@@ -932,6 +976,7 @@
           `trim ${s.trim || "–"}`,
           fin(num(s.bem)) ? `BEM ${s.bem} lb` : "BEM missing",
           s.prep ? `by ${s.prep}` : "no name",
+          ...(pair ? ["sheets: 2 per takeoff"] : []),
         ].join(" · "),
       ),
     );
@@ -948,6 +993,17 @@
       const isD = p === "D";
       const S = sheetData(p, isD ? LW.lm : LW.legs[idx].tow);
       sheets.push(S);
+      if (pair && !isD) {
+        const arrP = idx + 1 < nLegs() ? "L" + (idx + 1) : "D";
+        S.arr = {
+          p: arrP,
+          apt: aptOf(arrP),
+          lm: legLm(idx),
+          box: landingBox(arrP, legLm(idx)),
+          where: [aptOf(arrP), String(pv(arrP, "rwy") || "").trim() && "RWY " + String(pv(arrP, "rwy")).trim()].filter(Boolean).join(" "),
+        };
+      }
+      const arrOver = !!(res && S.arr && fin(S.arr.box.l.tot) && fin(S.arr.box.llen) && S.arr.box.l.tot > S.arr.box.llen);
       const apt = LAT.find(S.apt),
         name = isD ? "Landing" : `Leg ${idx + 1}`;
       const head = S.t.wind ? S.t.head : 0;
@@ -963,6 +1019,8 @@
             ? [
                 ...(isD ? [] : S.t.warn),
                 ...S.l.warn.map((x) => (isD ? x : "Emergency landing: " + x)),
+                ...(S.arr ? S.arr.box.l.warn.map((x) => `Arrival ${S.arr.apt}: ${x}`) : []),
+                ...(arrOver && !S.arr.box.l.warn.some((x) => /exceeds runway length/.test(x)) ? [`Arrival ${S.arr.apt}: landing distance exceeds runway length`] : []),
                 ...latW,
               ]
             : latW,
@@ -982,7 +1040,7 @@
             : ""),
       );
       const need = isD ? S.l.tot : Math.max(S.t.tod, S.l.tot);
-      const ok = fin(need) && fin(S.lenN) ? need <= S.lenN && !warn.length : null;
+      const ok = fin(need) && fin(S.lenN) ? need <= S.lenN && !arrOver && !warn.length : null;
       if (res) strip.push(stripRow(S, idx, need, ok, warn));
       setHTML(
         "sum-" + p,
@@ -1006,6 +1064,7 @@
             ? tile("Landing dist.", fin(S.l.tot) ? r10(S.l.tot) + " ft" : "", fin(S.lenN) ? `of ${r0(S.lenN)} ft` : "", S.l.tot > S.lenN ? "bad" : "")
             : tile("T/O dist. 50 ft", fin(S.t.tod) ? r10(S.t.tod) + " ft" : "", fin(S.lenN) ? `of ${r0(S.lenN)} ft` : "", S.t.tod > S.lenN ? "bad" : ""),
           !res || isD ? "" : tile("Emerg. landing", fin(S.l.tot) ? r10(S.l.tot) + " ft" : "", "same runway, T/O mass", S.l.tot > S.lenN ? "bad" : ""),
+          !res || !S.arr ? "" : tile("Arrival landing", fin(S.arr.box.l.tot) ? r10(S.arr.box.l.tot) + " ft" : "", fin(S.arr.box.llen) ? `${S.arr.where} · of ${r0(S.arr.box.llen)} ft` : S.arr.where, arrOver ? "bad" : ""),
         ].join(""),
       );
       renderRunways(p);
@@ -1130,7 +1189,7 @@
       host.innerHTML = '<p class="ph">Preparing the PDF…</p>';
       host.dataset.ph = "2";
     }
-    buildPdf(s, L, sheets, occ)
+    buildPdf(s, L, pdfSheets(sheets), occ)
       .then((b) => {
         if (!isRes()) return;
         lastBytes = b;

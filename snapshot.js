@@ -5,7 +5,7 @@
 'use strict';
 
 // Flight-level defaults and per-point defaults (app.js starts from these).
-const DEFAULTS = { reg: '', flight: '', time: '', prep: '', bem: '', bemCg: '', w1: '', w2: '', w3: '', w4: '', bag: 18, fuelTO: 38.5, trim: 'T/O 0', vrbWorst: true, nR: 2, R0: '', R1: '' };
+const DEFAULTS = { reg: '', flight: '', time: '', prep: '', bem: '', bemCg: '', w1: '', w2: '', w3: '', w4: '', bag: 18, fuelTO: 38.5, trim: 'T/O 0', vrbWorst: true, sheetMode: 'lat', nR: 2, R0: '', R1: '' };
 const PT_DEFAULTS = { dur: 60, trip: 15, gnd: 30, slope: 0, surf: 'paved', eflaps: '100', ac: false };
 
 const FLIGHT_NUM = ['bem', 'bemCg', 'w1', 'w2', 'w3', 'w4', 'bag', 'fuelTO'];
@@ -52,6 +52,7 @@ function canonical(s) {
   put('reg', txt(s.reg).toUpperCase());
   FLIGHT_NUM.forEach((k) => put(k, num(s[k])));
   o.vrbWorst = s.vrbWorst === undefined ? DEFAULTS.vrbWorst : !!s.vrbWorst;
+  if (s.sheetMode === 'pair') o.sheetMode = 'pair'; // only the non-default value is stored, so older snapshots keep their hash
   const n = nStops(s);
   o.nR = n;
   for (let i = 0; i < n; i++) put('R' + i, txt(s['R' + i]).toUpperCase());
@@ -88,6 +89,7 @@ function fromCanonical(c) {
   const s = {};
   Object.keys(DEFAULTS).forEach((k) => { s[k] = c[k] !== undefined ? c[k] : DEFAULTS[k] === true ? false : ''; });
   s.vrbWorst = c.vrbWorst !== undefined ? !!c.vrbWorst : DEFAULTS.vrbWorst;
+  s.sheetMode = c.sheetMode === 'pair' ? 'pair' : 'lat';
   s.date = c.date || '';
   const n = nStops(c);
   s.nR = n;

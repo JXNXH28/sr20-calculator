@@ -20,6 +20,13 @@ Sheets: one T/O data sheet per takeoff, whose landing box is the **emergency ret
 T/O weight), plus one sheet for the **landing at the destination** (weather at arrival time, everything at landing
 mass). Two sheets per page, then the load sheet for the first departure.
 
+Alternative method (step 2, "Usually the same" > "T/O data sheets"): **two sheets per takeoff** and no destination
+sheet. The first is the immediate return (remarks start with e.g. "KGYR-KGYR"), the second lands at the leg's arrival
+airport at that leg's landing mass (remarks "KGYR-KBXK"); everything else is identical. The arrival landing uses the
+runway, weather and flaps of the next point (for an intermediate stop that is the weather fetched for its takeoff
+time), so still enter or fetch every point including the destination. The results show an extra "Arrival landing"
+tile and verdict line per leg. The setting is saved with the calculation.
+
 Per leg: flight time and trip fuel; at each stop, ground time and an optional "refuel to" amount. Leg TOW = first TOM
 minus the fuel burned on earlier legs (or ZFM + refuelled fuel). Density altitude = PA + 120 × (OAT − ISA), ISA rounded
 to whole °C.
