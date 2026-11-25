@@ -199,6 +199,105 @@ function landing(i) {
   return o;
 }
 
+/* ---------------- cruise (SR20 POH Sec. 5, 2600 lb, zero wind) ---------------- */
+// Row: [pa, rpm, MAP, [pwr%, KTAS, GPH] at ISA-30, ISA, ISA+30]. Rows within a block run from high to low power.
+const CRUISE = [
+  [2000,2700,27.1,[94,151,16.5],[90,156,15.8],[85,158,15.2]],
+  [2000,2500,27.1,[86,148,14.9],[82,151,14.2],[78,153,13.7]],
+  [2000,2500,26,[81,145,14.2],[77,148,13.6],[73,150,11.5]],
+  [2000,2500,24.9,[77,142,13.5],[73,144,12.3],[69,146,10.9]],
+  [2000,2500,23.8,[72,139,13.3],[68,140,11.6],[65,142,10.3]],
+  [2000,2500,22.7,[67,135,12.5],[64,136,10.9],[61,138,9.7]],
+  [2000,2500,21.6,[62,130,11.7],[59,132,10.3],[56,132,9.1]],
+  [2000,2500,20.5,[58,126,11],[55,127,9.6],[52,127,8.5]],
+  [2000,2500,19.4,[53,121,10.2],[50,121,9],[48,121,8]],
+  [4000,2700,25.2,[88,152,15.6],[84,155,14.9],[80,157,14.4]],
+  [4000,2500,25.2,[80,147,14.1],[76,150,13.4],[73,152,11.2]],
+  [4000,2500,24.1,[76,144,13.4],[72,146,12],[68,148,10.6]],
+  [4000,2500,23,[71,140,13],[67,142,11.3],[64,144,10]],
+  [4000,2500,21.9,[66,136,12.2],[63,138,10.6],[60,139,9.4]],
+  [4000,2500,20.8,[61,132,11.4],[58,133,9.9],[55,134,8.8]],
+  [4000,2500,19.7,[57,127,10.6],[54,128,9.3],[51,128,8.2]],
+  [4000,2500,18.6,[52,121,9.9],[49,122,8.6],[47,122,7.7]],
+  [4000,2500,17.5,[47,115,9.1],[45,115,8],[42,115,7.1]],
+  [6000,2700,23.4,[82,151,14.7],[78,154,14.1],[74,156,11.4]],
+  [6000,2500,23.4,[75,146,13.5],[71,148,11.7],[68,150,10.4]],
+  [6000,2500,22.3,[70,142,12.7],[66,144,11],[63,145,9.7]],
+  [6000,2500,21.2,[65,138,11.9],[62,140,10.3],[59,141,9.1]],
+  [6000,2500,20.1,[60,133,11.1],[57,135,9.7],[55,136,8.6]],
+  [6000,2500,19,[56,128,10.3],[53,129,9],[50,129,8]],
+  [6000,2500,17.9,[51,123,9.6],[48,123,8.4],[46,123,7.4]],
+  [6000,2500,16.8,[46,116,8.8],[44,116,7.7],[42,115,6.9]],
+  [8000,2700,21.6,[76,150,13.9],[72,152,11.9],[69,154,10.5]],
+  [8000,2500,21.6,[70,144,12.5],[66,146,10.8],[63,148,9.5]],
+  [8000,2500,20.5,[65,140,11.6],[61,142,10.1],[58,143,8.9]],
+  [8000,2500,19.4,[60,135,10.9],[57,137,9.4],[54,137,8.4]],
+  [8000,2500,18.3,[55,130,10.1],[52,131,8.8],[50,131,7.8]],
+  [8000,2500,17.2,[50,124,9.3],[48,124,8.1],[45,124,7.2]],
+  [8000,2500,16.1,[45,117,8.6],[43,117,7.5],[41,116,6.7]],
+  [10000,2700,20,[71,148,12.7],[67,150,11],[64,151,9.7]],
+  [10000,2500,20,[65,142,11.5],[61,144,10],[58,145,8.8]],
+  [10000,2500,18.9,[60,138,10.7],[56,139,9.3],[54,139,8.2]],
+  [10000,2500,17.8,[55,132,9.9],[52,133,8.6],[49,133,7.6]],
+  [10000,2500,16.7,[50,126,9.1],[47,126,8],[45,126,7.1]],
+  [10000,2500,15.6,[45,119,8.4],[43,118,7.3],[41,117,6.5]],
+  [12000,2700,18.5,[66,146,11.7],[62,147,10.1],[59,148,8.9]],
+  [12000,2500,18.5,[60,140,10.6],[57,141,9.2],[54,142,8.1]],
+  [12000,2500,17.4,[55,135,9.8],[52,135,8.5],[49,135,7.5]],
+  [12000,2500,16.3,[50,128,9],[47,128,7.9],[45,128,6.9]],
+  [12000,2500,15.2,[45,121,8.3],[43,120,7.2],[40,119,6.4]],
+  [14000,2700,17.1,[61,143,10.8],[57,144,9.3],[54,145,8.2]],
+  [14000,2500,17.1,[55,137,9.8],[52,138,8.5],[50,138,7.5]],
+  [14000,2500,16,[50,131,9],[48,131,7.8],[45,130,6.9]],
+  [14000,2500,14.9,[45,123,8.2],[43,123,7.1],[41,121,6.3]]
+];
+const CRUISE_PA = [2000, 4000, 6000, 8000, 10000, 12000, 14000];
+const CRUISE_ISA = [-30, 0, 30];
+
+// One altitude block at one ISA column: interpolate between rows to the target power.
+// Above the block's top power the top row is used (capped).
+function cruiseCol(pa, col, pwr) {
+  const r = CRUISE.filter((x) => x[0] === pa).map((x) => x[3 + col]);
+  if (pwr >= r[0][0]) return { pwr: r[0][0], tas: r[0][1], ff: r[0][2], capped: pwr > r[0][0] };
+  const last = r[r.length - 1];
+  if (pwr <= last[0]) return { pwr: last[0], tas: last[1], ff: last[2], capped: false };
+  const xs = r.map((x) => x[0]).reverse();
+  return {
+    pwr, capped: false,
+    tas: lerp1(xs, r.map((x) => x[1]).reverse(), pwr),
+    ff: lerp1(xs, r.map((x) => x[2]).reverse(), pwr)
+  };
+}
+
+// {pa, isaDev, pwr=75} -> {pwr, tas (kt, integer), ff (USG/h, rounded up to 0.1), capped?, how}
+// pwr = power actually reached (lower than requested when the table can't reach it).
+function cruise(i) {
+  const pwr = isNum(i.pwr) ? i.pwr : 75;
+  const isaDev = clamp(isNum(i.isaDev) ? i.isaDev : 0, -30, 30);
+  const pa = clamp(isNum(i.pa) ? i.pa : 0, CRUISE_PA[0], CRUISE_PA[CRUISE_PA.length - 1]);
+  let capped = false;
+  // only blocks and ISA columns that actually feed the interpolation count towards "capped"
+  const bi = Math.min(CRUISE_PA.length - 2, Math.max(0, CRUISE_PA.filter((b) => b <= pa).length - 1));
+  const ci = Math.min(1, Math.max(0, CRUISE_ISA.filter((d) => d <= isaDev).length - 1));
+  const blocks = CRUISE_PA.map((b, k) => {
+    const cols = [0, 1, 2].map((c) => cruiseCol(b, c, pwr));
+    const w = (k === bi && pa < b + 2000 || k === bi + 1 && pa > b - 2000);
+    if (w && cols.some((c, j) => c.capped && (j === ci && isaDev < CRUISE_ISA[ci + 1] || j === ci + 1 && isaDev > CRUISE_ISA[ci]))) capped = true;
+    const at = (k) => lerp1(CRUISE_ISA, cols.map((c) => c[k]), isaDev);
+    return { pwr: at('pwr'), tas: at('tas'), ff: at('ff') };
+  });
+  const at = (k) => lerp1(CRUISE_PA, blocks.map((b) => b[k]), pa);
+  const o = {
+    pwr: Math.round(at('pwr') * 10) / 10,
+    tas: Math.round(at('tas')),
+    ff: Math.ceil(at('ff') * 10 - 1e-9) / 10
+  };
+  if (capped) o.capped = true;
+  o.how = `POH cruise 2600 lb, PA ${Math.round(pa)} ft, ISA${isaDev >= 0 ? '+' : ''}${Math.round(isaDev)}: ` +
+    (capped ? `target ${pwr}% not reachable, ${o.pwr}% max` : `${o.pwr}%`) + ` - ${o.tas} KTAS, ${o.ff} GPH`;
+  return o;
+}
+
 /* ---------------- mass & balance ---------------- */
 function inPoly(pt, poly) {
   let c = false;
@@ -265,6 +364,6 @@ function legWeights(zfm, fuelTO, legs) {
   return o;
 }
 
-const Perf = { TO, LAND, ROC, SPEEDS, ENVELOPE, ARM, MAX, LB_PER_USG, lerp1, bilerp, pressureAlt, isaTemp, densityAlt, windComponents, speedRow, takeoff, landing, loadSheet, legWeights, inPoly, isNum };
+const Perf = { TO, LAND, ROC, SPEEDS, ENVELOPE, ARM, MAX, LB_PER_USG, lerp1, bilerp, pressureAlt, isaTemp, densityAlt, cruise, windComponents, speedRow, takeoff, landing, loadSheet, legWeights, inPoly, isNum };
 if (typeof module !== 'undefined' && module.exports) module.exports = Perf; else root.Perf = Perf;
 })(this);

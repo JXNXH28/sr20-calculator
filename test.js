@@ -169,6 +169,18 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
 // ==== nav tests (OFP) ====
 // ==== end nav ====
 // ==== cruise tests (OFP) ====
+{
+  const c = P.cruise({ pa: 6500, isaDev: 0 });
+  eq('cruise 6500 ISA tas', c.tas, 151, 2); eq('cruise 6500 ISA ff', c.ff, 12.7, 0.3); eq('cruise 6500 ISA pwr', c.pwr, 74.5, 0.6);
+  const g = P.cruise({ pa: 8000, isaDev: 0, pwr: 72 });
+  eq('cruise 8000 grid pwr', g.pwr, 72); eq('cruise 8000 grid tas', g.tas, 152); eq('cruise 8000 grid ff', g.ff, 11.9);
+  eq('cruise 8000 75% capped', P.cruise({ pa: 8000, isaDev: 0 }).capped, true);
+  eq('cruise 4000 75% not capped', !!P.cruise({ pa: 4000, isaDev: 0 }).capped, false);
+  eq('cruise pa clamps low', P.cruise({ pa: 0, isaDev: 0 }).tas, P.cruise({ pa: 2000, isaDev: 0 }).tas);
+  eq('cruise pa clamps high', P.cruise({ pa: 20000, isaDev: 0 }).tas, P.cruise({ pa: 14000, isaDev: 0 }).tas);
+  eq('cruise warmer is faster', P.cruise({ pa: 4000, isaDev: 15 }).tas > P.cruise({ pa: 4000, isaDev: 0 }).tas, true);
+  eq('isaTemp 6000', P.isaTemp(6000), 3);
+}
 // ==== end cruise ====
 // ==== ato tests (OFP) ====
 // ==== end ato ====
