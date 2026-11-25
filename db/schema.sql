@@ -298,3 +298,320 @@ grant execute on function public.is_admin()                               to aut
 --   -- select calculate('{"a":2}', null, null, null, null);  -- error: no_tokens (0 tokens left)
 --   -- (grant 1 more token, then {"a":2} succeeds with charged: true)
 --   -- rollback;
+
+-- ================================================================ OFP (VFR navigation log builder)
+-- Additive and idempotent: safe to re-run on a database that already has the schema above.
+-- ofps          one row per flight plan; the inputs jsonb is the editable draft + result.
+-- waypoints     owner null = global (ATO points placed by admins), owner = user id = personal points.
+-- finalize_ofp  creates or updates an OFP; charges 3 tokens (constant below) once per flight
+--               (same id owned by the caller + same flight_date + dep + dest => free update).
+
+create table if not exists public.ofps (
+  id          bigint generated always as identity primary key,
+  user_id     uuid not null references public.profiles on delete cascade,
+  flight_date date not null,
+  dep         text not null,
+  dest        text not null,
+  route       text,
+  reg         text,
+  inputs      jsonb not null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index if not exists ofps_user_created_idx on public.ofps (user_id, created_at desc);
+
+-- Ledger: link to the OFP and allow the 'ofp' reason (the old check may be auto-named: look it up).
+alter table public.token_ledger add column if not exists ofp_id bigint references public.ofps on delete set null;
+
+do $$
+declare c record;
+begin
+  for c in
+    select conname from pg_constraint
+    where conrelid = 'public.token_ledger'::regclass and contype = 'c'
+      and pg_get_constraintdef(oid) ilike '%reason%'
+  loop
+    execute format('alter table public.token_ledger drop constraint %I', c.conname);
+  end loop;
+  alter table public.token_ledger
+    add constraint token_ledger_reason_check check (reason in ('grant','calc','adjust','ofp'));
+end;
+$$;
+
+create table if not exists public.waypoints (
+  id         bigint generated always as identity primary key,
+  owner      uuid references public.profiles on delete cascade,   -- null = global (ATO)
+  name       text not null check (length(name) between 1 and 40),
+  ident      text check (ident is null or length(ident) <= 6),
+  lat        double precision not null check (lat between -90 and 90),
+  lon        double precision not null check (lon between -180 and 180),
+  notes      text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists waypoints_owner_idx on public.waypoints (owner);
+-- One global point per name (case-insensitive), so an ATO point cannot be placed twice.
+create unique index if not exists waypoints_global_name_uidx on public.waypoints (lower(name)) where owner is null;
+
+-- ---------------------------------------------------------------- finalize_ofp
+
+-- Save an OFP. Returns {id, created_at, balance, charged}.
+create or replace function public.finalize_ofp(
+  p_id bigint, p_inputs jsonb, p_flight_date date, p_dep text, p_dest text, p_route text, p_reg text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c_price  constant int := 3;          -- tokens per flight (server constant)
+  v_uid    uuid := auth.uid();
+  v_prof   public.profiles%rowtype;
+  v_ofp    public.ofps%rowtype;
+  v_dep    text := upper(btrim(coalesce(p_dep, '')));
+  v_dest   text := upper(btrim(coalesce(p_dest, '')));
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+  if p_inputs is null or length(p_inputs::text) > 200000 then
+    raise exception 'inputs_too_large';
+  end if;
+  if p_flight_date is null or v_dep = '' or v_dest = '' then
+    raise exception 'invalid_flight';
+  end if;
+
+  -- Lock the profile first: serializes concurrent calls from the same user.
+  select * into v_prof from public.profiles where id = v_uid for update;
+  if not found then
+    raise exception 'no_profile';
+  end if;
+
+  -- Same flight already finalized by this user: update for free (even if disabled / out of tokens).
+  if p_id is not null then
+    select * into v_ofp from public.ofps
+     where id = p_id and user_id = v_uid
+       and flight_date = p_flight_date and dep = v_dep and dest = v_dest
+     for update;
+    if found then
+      update public.ofps
+         set inputs = p_inputs, route = p_route, reg = p_reg, updated_at = now()
+       where id = v_ofp.id
+      returning * into v_ofp;
+      return jsonb_build_object('id', v_ofp.id, 'created_at', v_ofp.created_at,
+                                'balance', v_prof.tokens, 'charged', false);
+    end if;
+  end if;
+
+  -- New flight (no id, someone else's id, or date/dep/dest changed): charge.
+  if v_prof.disabled then
+    raise exception 'account_disabled';
+  end if;
+  if v_prof.tokens < c_price then
+    raise exception 'no_tokens';
+  end if;
+
+  insert into public.ofps (user_id, flight_date, dep, dest, route, reg, inputs)
+  values (v_uid, p_flight_date, v_dep, v_dest, p_route, p_reg, p_inputs)
+  returning * into v_ofp;
+
+  update public.profiles set tokens = tokens - c_price where id = v_uid
+  returning tokens into v_prof.tokens;
+
+  insert into public.token_ledger (user_id, delta, reason, ofp_id)
+  values (v_uid, -c_price, 'ofp', v_ofp.id);
+
+  return jsonb_build_object('id', v_ofp.id, 'created_at', v_ofp.created_at,
+                            'balance', v_prof.tokens, 'charged', true);
+end;
+$$;
+
+-- ---------------------------------------------------------------- personal waypoints
+
+-- Create (p_id null) or update (own point only) a personal waypoint; returns its id.
+create or replace function public.upsert_waypoint(
+  p_id bigint, p_name text, p_ident text, p_lat double precision, p_lon double precision, p_notes text
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_prof  public.profiles%rowtype;
+  v_name  text := btrim(coalesce(p_name, ''));
+  v_ident text := nullif(upper(btrim(coalesce(p_ident, ''))), '');
+  v_id    bigint;
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+  if length(v_name) not between 1 and 40 or (v_ident is not null and length(v_ident) > 6)
+     or length(coalesce(p_notes, '')) > 500 then
+    raise exception 'invalid_waypoint';
+  end if;
+  if p_lat is null or p_lon is null or p_lat not between -90 and 90 or p_lon not between -180 and 180 then
+    raise exception 'invalid_waypoint';
+  end if;
+
+  select * into v_prof from public.profiles where id = v_uid for update;   -- also serializes the count check
+  if not found then
+    raise exception 'no_profile';
+  end if;
+  if v_prof.disabled then
+    raise exception 'account_disabled';
+  end if;
+
+  if p_id is null then
+    if (select count(*) from public.waypoints where owner = v_uid) >= 500 then
+      raise exception 'too_many_waypoints';
+    end if;
+    insert into public.waypoints (owner, name, ident, lat, lon, notes)
+    values (v_uid, v_name, v_ident, p_lat, p_lon, nullif(p_notes, ''))
+    returning id into v_id;
+  else
+    update public.waypoints
+       set name = v_name, ident = v_ident, lat = p_lat, lon = p_lon,
+           notes = nullif(p_notes, ''), updated_at = now()
+     where id = p_id and owner = v_uid
+    returning id into v_id;
+    if v_id is null then
+      raise exception 'not_found';
+    end if;
+  end if;
+  return v_id;
+end;
+$$;
+
+-- Delete one of the caller's own waypoints.
+create or replace function public.delete_waypoint(p_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'not_authenticated';
+  end if;
+  delete from public.waypoints where id = p_id and owner = v_uid;
+  if not found then
+    raise exception 'not_found';
+  end if;
+end;
+$$;
+
+-- ---------------------------------------------------------------- admin: global (ATO) waypoints
+
+-- Place or move a global waypoint (owner null). With p_id null and an existing global point of the
+-- same name, that point is updated instead of creating a duplicate.
+create or replace function public.admin_upsert_waypoint(
+  p_id bigint, p_name text, p_ident text, p_lat double precision, p_lon double precision, p_notes text
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name  text := btrim(coalesce(p_name, ''));
+  v_ident text := nullif(upper(btrim(coalesce(p_ident, ''))), '');
+  v_id    bigint := p_id;
+begin
+  if not public.is_admin() then
+    raise exception 'forbidden';
+  end if;
+  if length(v_name) not between 1 and 40 or (v_ident is not null and length(v_ident) > 6)
+     or length(coalesce(p_notes, '')) > 500 then
+    raise exception 'invalid_waypoint';
+  end if;
+  if p_lat is null or p_lon is null or p_lat not between -90 and 90 or p_lon not between -180 and 180 then
+    raise exception 'invalid_waypoint';
+  end if;
+
+  if v_id is null then
+    select id into v_id from public.waypoints where owner is null and lower(name) = lower(v_name);
+  end if;
+
+  if v_id is null then
+    insert into public.waypoints (owner, name, ident, lat, lon, notes)
+    values (null, v_name, v_ident, p_lat, p_lon, nullif(p_notes, ''))
+    returning id into v_id;
+  else
+    update public.waypoints
+       set name = v_name, ident = v_ident, lat = p_lat, lon = p_lon,
+           notes = nullif(p_notes, ''), updated_at = now()
+     where id = v_id and owner is null
+    returning id into v_id;
+    if v_id is null then
+      raise exception 'not_found';
+    end if;
+  end if;
+  return v_id;
+end;
+$$;
+
+create or replace function public.admin_delete_waypoint(p_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'forbidden';
+  end if;
+  delete from public.waypoints where id = p_id and owner is null;
+  if not found then
+    raise exception 'not_found';
+  end if;
+end;
+$$;
+
+-- ---------------------------------------------------------------- OFP RLS and privileges
+
+alter table public.ofps      enable row level security;
+alter table public.waypoints enable row level security;
+
+drop policy if exists ofps_select      on public.ofps;
+drop policy if exists waypoints_select on public.waypoints;
+
+create policy ofps_select      on public.ofps      for select to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+create policy waypoints_select on public.waypoints for select to authenticated
+  using (owner is null or owner = auth.uid());
+-- No insert/update/delete policies: all writes go through the functions above.
+
+revoke all on public.ofps, public.waypoints from anon;
+revoke insert, update, delete, truncate on public.ofps, public.waypoints from authenticated;
+grant select on public.ofps, public.waypoints to authenticated;
+
+revoke execute on function public.finalize_ofp(bigint, jsonb, date, text, text, text, text)                      from public, anon;
+revoke execute on function public.upsert_waypoint(bigint, text, text, double precision, double precision, text)  from public, anon;
+revoke execute on function public.delete_waypoint(bigint)                                                        from public, anon;
+revoke execute on function public.admin_upsert_waypoint(bigint, text, text, double precision, double precision, text) from public, anon;
+revoke execute on function public.admin_delete_waypoint(bigint)                                                  from public, anon;
+
+grant execute on function public.finalize_ofp(bigint, jsonb, date, text, text, text, text)                      to authenticated;
+grant execute on function public.upsert_waypoint(bigint, text, text, double precision, double precision, text)  to authenticated;
+grant execute on function public.delete_waypoint(bigint)                                                        to authenticated;
+grant execute on function public.admin_upsert_waypoint(bigint, text, text, double precision, double precision, text) to authenticated;
+grant execute on function public.admin_delete_waypoint(bigint)                                                  to authenticated;
+
+-- ---------------------------------------------------------------- OFP rollback (run manually, destroys OFP data)
+--   drop function if exists public.admin_delete_waypoint(bigint);
+--   drop function if exists public.admin_upsert_waypoint(bigint, text, text, double precision, double precision, text);
+--   drop function if exists public.delete_waypoint(bigint);
+--   drop function if exists public.upsert_waypoint(bigint, text, text, double precision, double precision, text);
+--   drop function if exists public.finalize_ofp(bigint, jsonb, date, text, text, text, text);
+--   -- ledger rows with reason 'ofp' must go (or be re-labelled) before the old check can come back:
+--   delete from public.token_ledger where reason = 'ofp';   -- refund first if needed: update profiles set tokens = tokens + 3 where ...
+--   alter table public.token_ledger drop column if exists ofp_id;
+--   alter table public.token_ledger drop constraint if exists token_ledger_reason_check;
+--   alter table public.token_ledger add constraint token_ledger_reason_check check (reason in ('grant','calc','adjust'));
+--   drop table if exists public.waypoints;
+--   drop table if exists public.ofps;

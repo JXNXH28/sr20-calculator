@@ -183,6 +183,32 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
 }
 // ==== end cruise ====
 // ==== ato tests (OFP) ====
+{
+  const ATO = require('./ato.js');
+  const ok = (name, c) => { if (!c) fail++; console.log((c ? 'ok   ' : 'FAIL ') + name); };
+  const dep = ATO.forAirport('KGYR', 'dep'), arr = ATO.forAirport('KGYR', 'arr');
+  const by = (l, id) => l.find((p) => p.id === id);
+  const bk = by(dep, 'GYR-DEP-BUCKEYE');
+  ok('Buckeye DEP -> LIBERTY BRIDGE 4 min / 7 NM', bk && bk.point === 'LIBERTY BRIDGE' && bk.min === 4 && bk.nm === 7);
+  const gc = by(dep, 'GYR-DEP-GILACROSSING');
+  ok('Gila Crossing DEP -> PIR 5/5', gc && gc.point === 'PIR' && gc.min === 5 && gc.nm === 5);
+  const tl = by(dep, 'GYR-DEP-TWINLAKES');
+  ok('Twin Lakes DEP -> LIBERTY BRIDGE 5/7', tl && tl.point === 'LIBERTY BRIDGE' && tl.min === 5 && tl.nm === 7);
+  const ppd = dep.find((p) => p.point === 'THE STACK'), ppa = arr.find((p) => p.point === 'THE STACK');
+  ok('Stack arrival 3 min, Stack departure 5 min', ppa.min === 3 && ppd.min === 5 && ppa.nm === 6 && ppd.nm === 6);
+  ok('Power Plant is dual only; +10 for KGEU', ppd.dualOnly && ppa.dualOnly && ppd.extraMinDest.KGEU === 10);
+  ok('Luke Aux 6 / Gap / Gila Crossing arrivals', by(arr, 'GYR-ARR-LUKEAUX6').min === 3 && by(arr, 'GYR-ARR-LUKEAUX6').nm === 7
+    && by(arr, 'GYR-ARR-GAP').min === 2 && by(arr, 'GYR-ARR-GAP').nm === 5
+    && by(arr, 'GYR-ARR-GILACROSSING').min === 6 && by(arr, 'GYR-ARR-GILACROSSING').nm === 14);
+  ok('KGYR full-stop arrivals add 10 min, departures 0', arr.every((p) => p.extraMin === 10) && dep.every((p) => p.extraMin === 0));
+  ok('ids unique', new Set(ATO.procedures.map((p) => p.id)).size === ATO.procedures.length);
+  const names = new Set(ATO.points.map((p) => p.name));
+  ok('point names unique and every procedure point is listed', names.size === ATO.points.length && ATO.procedures.every((p) => names.has(p.point)));
+  ok('forAirport filters kind', dep.every((p) => p.kind === 'dep') && ATO.forAirport('KGYR').length === dep.length + arr.length);
+  ok('forAirport unknown airport is empty', ATO.forAirport('KXXX', 'dep').length === 0);
+  ok('usable false with no waypoints', !ATO.usable(bk, {}) && !ATO.usable(bk, null) && !ATO.usable(bk, { 'LIBERTY BRIDGE': {} }) && !ATO.usable(bk, { 'LIBERTY BRIDGE': { lat: null, lon: null } }));
+  ok('usable true with coordinates', ATO.usable(bk, { 'LIBERTY BRIDGE': { lat: 33.3, lon: -112.6 } }));
+}
 // ==== end ato ====
 // ==== print tests (OFP) ====
 // ==== end print ====
