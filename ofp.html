@@ -115,6 +115,26 @@ table.legs input.wnd{width:58px}
 #atoList button{display:flex;gap:8px;text-align:left;border-radius:5px;padding:4px 8px;font-size:12px;width:100%}
 #atoList button.sel{border-color:var(--acc);background:var(--bg)}
 #atoList small{margin-left:auto;opacity:.75}
+#atoList .arow{display:flex;gap:4px;align-items:stretch}
+#atoList .arow button.pt{flex:1}
+#atoList .arow button.mini{width:auto;padding:2px 6px;font-size:11px}
+#atoList .arow.unused .pt{opacity:.6}
+#procList .pg{font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.65;margin:6px 0 2px}
+#procList .prow{display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0}
+#procList .prow.hid{opacity:.55}
+#procList .prow span.nm{flex:1}
+#procList .prow button{padding:2px 8px;font-size:11px}
+#procList .bdg{font-size:10px;border:1px solid var(--acc);border-radius:8px;padding:0 5px;margin-left:4px}
+dialog.pe{max-width:min(720px,96vw);width:96vw;max-height:92vh;overflow:auto}
+dialog.pe label{display:flex;flex-direction:column;font-size:12px;gap:2px}
+dialog.pe .g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin:6px 0}
+dialog.pe .tr{border:1px solid #0003;border-radius:6px;padding:6px;margin:6px 0}
+dialog.pe .tp{display:flex;gap:4px;align-items:center;margin:3px 0}
+dialog.pe .tp input[data-f=pn]{flex:1;min-width:0}
+dialog.pe .tp input[data-f=pa]{width:72px}
+dialog.pe .ck2{flex-direction:row;align-items:center;gap:4px}
+dialog.pe .btns{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-top:8px}
+dialog.pe button{padding:3px 8px}
 /* map decorations */
 .vtx{display:grid;place-items:center;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--rt);color:#fff;font:700 11px/1 -apple-system,Segoe UI,Arial,sans-serif;border:2px solid #fff;box-shadow:0 1px 4px #0007}
 .vtx.apt{border-radius:5px;background:#0b3d91}
@@ -242,7 +262,11 @@ dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #
         </div>
         <div class="row" style="margin-top:6px">
           <label>Departure procedure<select id="depProc"></select></label>
+          <label hidden>Departure transition<select id="depTr"></select></label>
+        </div>
+        <div class="row" style="margin-top:6px">
           <label>Arrival procedure<select id="arrProc"></select></label>
+          <label hidden>Arrival transition<select id="arrTr"></select></label>
         </div>
         <p class="note" id="routeNote"></p>
         <p class="note">Click the map to add points (snaps to library points within 12 px). Drag a point to move it, drag a leg's white dot to insert one. Tap a point for rename, save and delete.</p>
@@ -274,7 +298,14 @@ dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #
       <details class="card" id="secAto" hidden><summary>ATO points (admin)</summary><div class="in">
         <p class="note">Click a name, then click the map to place it. Placed points can be dragged on the map.</p>
         <p class="note">Tip: turn on the OpenStreetMap overlay to find bridges, roads and landmarks.</p>
+        <div class="acts" style="margin-bottom:6px"><button type="button" class="sm" id="atoNew">+ New point</button></div>
         <div id="atoList"></div>
+      </div></details>
+      <details class="card" id="secProcs" hidden><summary>ATO procedures (admin)</summary><div class="in">
+        <p class="note">Plate defaults come from the code. Edits are saved as overrides; each transition lists the plate landmarks that become checkpoints.</p>
+        <div class="acts" style="margin-bottom:6px"><button type="button" class="sm" id="procNew">+ New procedure</button></div>
+        <div id="procList"></div>
+        <datalist id="atoNames"></datalist>
       </div></details>
       <p class="fine"><b>Training aid only.</b> Verify every value against B02, the POH and the chart before flight. Automatic MSA, airspace and glide values (when shown) must be verified on the chart. Charts: FAA VFR Terminal and Sectional tiles.</p>
     </div>

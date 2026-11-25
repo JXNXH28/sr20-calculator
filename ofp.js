@@ -44,7 +44,7 @@
       v: 1, id: null, finalKey: null, finalSig: null,
       date: today(), offBlock: "", toTime: "", blockMin: null, reg: "", callsign: "", mission: "", crew: ["", "", ""],
       solo: true, night: false, dep: "KGYR", dest: "KGYR", takeoffFuel: 45, pwr: 75, isaDev: 0, isaAuto: false, cruiseFfOv: null, auto: { legs: {}, src: {}, at: null },
-      windMode: "single", wind: { dir: null, spd: null }, depProc: null, arrProc: null, mid: [], seq: 0, notes: "",
+      windMode: "single", wind: { dir: null, spd: null }, depProc: null, arrProc: null, depTr: null, arrTr: null, mid: [], seq: 0, notes: "",
       destPt: { alt: null, msa: null, wind: null, rem: Object.assign(blankRem(), { fullStop: true }) },
     });
     function normState(s) {
@@ -123,7 +123,7 @@
       const w = who.trim().split(/[\s@.]+/).filter(Boolean);
       byId("ini").textContent = w.length ? (w[0][0] + (w.length > 1 ? w[1][0] : "")).toUpperCase() : "?";
       byId("adminLink").hidden = profile.role !== "admin";
-      byId("secAto").hidden = profile.role !== "admin";
+      byId("secAto").hidden = profile.role !== "admin"; byId("secProcs").hidden = profile.role !== "admin";
     }
     const acctBtn = byId("acctBtn"), acctMenu = byId("acctMenu");
     const menuItems = () => [...acctMenu.querySelectorAll("[role=menuitem]")].filter((el) => !el.hidden && !el.disabled);
@@ -147,6 +147,8 @@
 
     /* ===================================================== data: airports, waypoint library ===================================================== */
     const lib = { ato: [], personal: [], byName: {}, loaded: false, error: "" };
+    // ATO procedures: the plate defaults in ato.js merged with the admin overrides stored in the ato_procedures table
+    let procs = ATO.merge(ATO.procedures, []), procRows = [];
     const aptList = Object.values(LAT).filter((a) => a && a.icao);
     const aptOf = (code) => LAT.find(code);
     const icaoOf = (code) => { const a = aptOf(code); return a ? a.icao : null; };
@@ -179,7 +181,15 @@
     }
     const aptElev = (code) => { const a = aptOf(code); return a && isNum(a.elev) ? a.elev : 0; };
 
+    async function loadProcs() {
+      try {
+        const rows = await Auth.rest("/ato_procedures?select=id,data,hidden&order=id.asc&limit=1000");
+        procRows = Array.isArray(rows) ? rows : [];
+      } catch (e) { procRows = []; }   // table missing (database setup pending) or unreachable: plate defaults only
+      procs = ATO.merge(ATO.procedures, procRows);
+    }
     async function loadWaypoints() {
+      await loadProcs();
       try {
         const rows = await Auth.rest("/waypoints?select=id,owner,name,ident,lat,lon,notes&order=name.asc&limit=1000");
         lib.ato = []; lib.personal = []; lib.byName = {};
@@ -194,7 +204,7 @@
           ? "Waypoint library not available yet (database setup pending). You can still plan with map points."
           : "Waypoint library unavailable: " + String((e && e.message) || e);
       }
-      renderLibrary(); renderProcSelects(); renderAto(); compute();
+      renderLibrary(); renderProcSelects(); renderAto(); renderProcAdmin(); compute();
     }
 
     /* ===================================================== map ===================================================== */
@@ -357,7 +367,7 @@
     }
 
     /* ===================================================== route model ===================================================== */
-    const procOf = (id) => ATO.procedures.find((p) => p.id === id) || null;
+    const procOf = (id) => procs.find((p) => p.id === id) || null;
     function depPt() { const c = aptCoord(state.dep); return c ? { id: "dep", name: state.dep, ident: state.dep, type: "AIRPORT", lat: c.lat, lon: c.lon } : null; }
     function destPt() { const c = aptCoord(state.dest); return c ? Object.assign({ id: "dest", name: state.dest, ident: state.dest, type: "AIRPORT", lat: c.lat, lon: c.lon }, state.destPt) : null; }
     // [dep, ...mid, dest] or null while an airport position is unknown
@@ -379,9 +389,11 @@
     function removePoint(id) {
       const i = state.mid.findIndex((p) => p.id === id); if (i < 0) return;
       const p = state.mid[i];
-      if (p.proc === "dep") state.depProc = null;
-      if (p.proc === "arr") state.arrProc = null;
-      state.mid.splice(i, 1); changed(true);
+      if (p.proc === "dep") { state.depProc = null; state.depTr = null; }
+      if (p.proc === "arr") { state.arrProc = null; state.arrTr = null; }
+      if (p.proc) state.mid = state.mid.filter((q) => q.proc !== p.proc);   // a procedure is all or nothing
+      else state.mid.splice(i, 1);
+      changed(true);
     }
     // click on the map: snap to a library point within 12 px, else a coordinate point
     function mapClick(e) {
@@ -465,10 +477,11 @@
       for (let i = 1; i < route.length; i++) {
         const a = route[i - 1], b = route[i], last = i === route.length - 1;
         const raw = Nav.dist(a, b), mc = Nav.magCourse(a, b, date);
-        const proc = b.proc === "dep" ? depP : a.proc === "arr" ? arrP : null;
+        // B02 fixed time/NM applies only to the gate leg: GYR to the exit point (dep) or entry point to GYR (arr); transition legs are normal
+        const proc = b.proc === "dep" && b.procRole !== "trans" ? depP : a.proc === "arr" && a.procRole !== "trans" ? arrP : null;
         const fixed = proc && proc.min != null && proc.nm != null ? { min: proc.min, nm: proc.nm } : null;
         const msa = effMsa(b);
-        let alt = isNum(b.alt) ? b.alt : b.proc === "dep" && depP && depP.alt ? depP.alt : defaultAlt(mc, msa, last);
+        let alt = isNum(b.alt) ? b.alt : b.proc && isNum(b.pAlt) ? b.pAlt : b.proc === "dep" && b.procRole !== "trans" && depP && depP.alt ? depP.alt : defaultAlt(mc, msa, last);
         const isa = isaFor(b, a, alt), perf = perfAt(alt, isa), w = windFor(b, a, alt);
         const xm = last && depP && depP.extraMinDest && depP.extraMinDest[icaoOf(state.dest)];
         const dist = fixed ? fixed.nm : raw < 0.05 ? 0 : Math.max(1, Math.round(raw));
@@ -649,39 +662,55 @@
       const t = calc.out && calc.out.totals;
       byId("sum").textContent = t ? `${state.dep} → ${state.dest} · ${calc.rows.length} legs · ${fmtMin(t.eet)} · ${f1(t.trip)} USG` : `${state.dep} → ${state.dest}`;
     }
+    const notPlaced = (proc, tr) => ATO.expand(proc, tr).filter((q) => { const w = lib.byName[q.name] || lib.byName[String(q.name).toUpperCase()]; return !w; }).map((q) => q.name);
     function renderProcSelects() {
-      const fill = (sel, apt, kind, cur) => {
-        const procs = ATO.forAirport(icaoOf(apt) || apt, kind);
-        sel.disabled = !procs.length;
-        sel.innerHTML = `<option value="">${procs.length ? "None" : "No ATO procedures"}</option>` + procs.map((p) => {
-          const placed = ATO.usable(p, lib.byName), dualBlock = p.dualOnly && state.solo;
-          const why = !placed ? " – not placed yet" : dualBlock ? " – dual only" : p.dualOnly ? " (dual only)" : "";
+      const fill = (sel, trSel, apt, kind, cur, curTr) => {
+        const list = ATO.forAirport(icaoOf(apt) || apt, kind, procs);
+        sel.disabled = !list.length;
+        sel.innerHTML = `<option value="">${list.length ? "None" : "No ATO procedures"}</option>` + list.map((p) => {
+          const placed = ATO.usable(p, lib.byName), dualBlock = p.dualOnly && state.solo, soloBlock = p.soloOnly && !state.solo;
+          const why = !placed ? " – not placed yet" : dualBlock ? " – dual only" : soloBlock ? " – solo only" : p.dualOnly ? " (dual only)" : p.soloOnly ? " (solo only)" : "";
           const tm = p.min != null ? ` ${Nav.fmtEet(p.min)}/${p.nm} NM` : "";
-          return `<option value="${esc(p.id)}"${placed && !dualBlock ? "" : " disabled"}${p.id === cur ? " selected" : ""}>${esc(p.name + tm + why)}</option>`;
+          return `<option value="${esc(p.id)}"${placed && !dualBlock && !soloBlock ? "" : " disabled"}${p.id === cur ? " selected" : ""}>${esc(p.name + tm + why)}</option>`;
         }).join("");
         if (cur && !sel.querySelector("option[selected]")) sel.value = "";
+        const proc = cur && list.find((p) => p.id === cur), trs = proc ? proc.transitions || [] : [];
+        trSel.hidden = !trs.length;
+        trSel.parentElement.hidden = !trs.length;
+        trSel.innerHTML = '<option value="">Direct (no transition)</option>' + trs.map((t) => {
+          const miss = notPlaced(proc, t.id), dualBlock = t.dualOnly && state.solo, soloBlock = t.soloOnly && !state.solo;
+          const why = miss.length ? " – not placed: " + miss.join(", ") : dualBlock ? " – dual only" : soloBlock ? " – solo only" : t.dualOnly ? " (dual only)" : t.soloOnly ? " (solo only)" : "";
+          return `<option value="${esc(t.id)}"${miss.length || dualBlock || soloBlock ? " disabled" : ""}${t.id === curTr ? " selected" : ""}>${esc(t.name + why)}</option>`;
+        }).join("");
+        if (curTr && !trSel.querySelector("option[selected]")) trSel.value = "";
       };
-      fill(byId("depProc"), state.dep, "dep", state.depProc);
-      fill(byId("arrProc"), state.dest, "arr", state.arrProc);
+      fill(byId("depProc"), byId("depTr"), state.dep, "dep", state.depProc, state.depTr);
+      fill(byId("arrProc"), byId("arrTr"), state.dest, "arr", state.arrProc, state.arrTr);
     }
-    function setProc(kind, id) {
-      const key = kind === "dep" ? "depProc" : "arrProc";
+    // Replace the departure/arrival procedure: every plate landmark of the chosen transition becomes a checkpoint
+    function setProc(kind, id, trId) {
+      const key = kind === "dep" ? "depProc" : "arrProc", trKey = kind === "dep" ? "depTr" : "arrTr";
       state.mid = state.mid.filter((p) => p.proc !== kind);
-      state[key] = null;
+      state[key] = null; state[trKey] = null;
       const proc = id && procOf(id);
       if (proc) {
-        const w = lib.byName[proc.point];
-        if (!w || !ATO.usable(proc, lib.byName)) { toast(`${proc.name}: point ${proc.point} is not placed yet`); }
+        const miss = notPlaced(proc, trId);
+        if (miss.length) toast(`${proc.name}: not placed yet: ${miss.join(", ")}`);
         else {
-          state[key] = proc.id;
-          const pt = { id: newId(), name: proc.point, ident: null, type: "USER WAYPOINT", lat: w.lat, lon: w.lon, lib: "ato", wid: w.id, proc: kind, alt: null, msa: null, wind: null, rem: blankRem() };
-          if (kind === "dep") state.mid.unshift(pt); else state.mid.push(pt);
+          state[key] = proc.id; state[trKey] = trId || null;
+          const pts = ATO.expand(proc, trId).map((q) => {
+            const w = lib.byName[q.name] || lib.byName[String(q.name).toUpperCase()];
+            return { id: newId(), name: q.name, ident: null, type: "USER WAYPOINT", lat: w.lat, lon: w.lon, lib: "ato", wid: w.id, proc: kind, procRole: q.role, pAlt: isNum(q.alt) ? q.alt : null, alt: null, msa: null, wind: null, rem: blankRem() };
+          });
+          if (kind === "dep") state.mid.unshift(...pts); else state.mid.push(...pts);
         }
       }
       changed(true);
     }
     byId("depProc").addEventListener("change", (e) => setProc("dep", e.target.value));
     byId("arrProc").addEventListener("change", (e) => setProc("arr", e.target.value));
+    byId("depTr").addEventListener("change", (e) => state.depProc && setProc("dep", state.depProc, e.target.value));
+    byId("arrTr").addEventListener("change", (e) => state.arrProc && setProc("arr", state.arrProc, e.target.value));
 
     function renderRouteNote() {
       const msgs = [];
@@ -847,8 +876,8 @@
         if (!a) { toast("Pick an airport from the LAT list"); e.target.value = state[key]; return; }
         if (state[key] === a.icao) return;
         state[key] = a.icao;
-        if (key === "dep") { state.mid = state.mid.filter((p) => p.proc !== "dep"); state.depProc = null; }
-        else { state.mid = state.mid.filter((p) => p.proc !== "arr"); state.arrProc = null; state.destPt.alt = null; }
+        if (key === "dep") { state.mid = state.mid.filter((p) => p.proc !== "dep"); state.depProc = null; state.depTr = null; }
+        else { state.mid = state.mid.filter((p) => p.proc !== "arr"); state.arrProc = null; state.arrTr = null; state.destPt.alt = null; }
         changed(true);
         const c = aptCoord(a.icao); if (c && !state.mid.length) map.setView([c.lat, c.lon], Math.max(map.getZoom(), 10));
       });
@@ -929,7 +958,7 @@
     document.addEventListener("click", (e) => { if (!e.target.closest("#msearch")) qres.innerHTML = ""; });
 
     /* ===================================================== route actions: clear, new, reverse, duplicate ===================================================== */
-    byId("clearRoute").addEventListener("click", () => { state.mid = []; state.depProc = null; state.arrProc = null; changed(true); });
+    byId("clearRoute").addEventListener("click", () => { state.mid = []; state.depProc = null; state.arrProc = null; state.depTr = null; state.arrTr = null; changed(true); });
     function reversedState(s) {
       const n = normState(JSON.parse(JSON.stringify(s)));
       const oldDepP = n.depProc && procOf(n.depProc), oldArrP = n.arrProc && procOf(n.arrProc);
@@ -937,13 +966,26 @@
       n.dep = dep; n.dest = dest;
       n.mid = n.mid.slice().reverse();
       // a procedure point flips to the matching procedure at the other airport when ATO has one, else it becomes a plain waypoint
-      const flip = (old, kind, apt) => old && ATO.forAirport(icaoOf(apt) || apt, kind).find((p) => p.point === old.point && ATO.usable(p, lib.byName));
+      const oldDepTr = n.depTr, oldArrTr = n.arrTr;
+      const flip = (old, kind, apt) => old && ATO.forAirport(icaoOf(apt) || apt, kind, procs).find((p) => (p.gate || p.point) === (old.gate || old.point) && ATO.usable(p, lib.byName));
       const newDep = flip(oldArrP, "dep", dep), newArr = flip(oldDepP, "arr", dest);
-      n.mid.forEach((p) => {
-        if (p.proc === "dep") p.proc = newArr ? "arr" : null; else if (p.proc === "arr") p.proc = newDep ? "dep" : null;
-        p.alt = null; p.msa = null; p.wind = null; p.rem = blankRem();
-      });
-      n.depProc = newDep ? newDep.id : null; n.arrProc = newArr ? newArr.id : null;
+      // the transition whose point list is the reversed one (gate excluded), else direct
+      const names = (proc, tr) => ATO.expand(proc, tr).filter((q) => q.role === "trans").map((q) => q.name.toUpperCase());
+      const sameRev = (np, oldP, oldTr) => {
+        const want = names(oldP, oldTr).reverse().join("|");
+        const t = (np.transitions || []).find((x) => names(np, x.id).join("|") === want && ATO.usable(np, x.id, lib.byName));
+        return t && want ? t.id : null;
+      };
+      const newDepTr = newDep ? sameRev(newDep, oldArrP, oldArrTr) : null, newArrTr = newArr ? sameRev(newArr, oldDepP, oldDepTr) : null;
+      // rebuild the procedure points from the library (the order and plate altitudes come from the new procedure)
+      // a procedure that has no counterpart at the other airport stays as plain waypoints
+      n.mid = n.mid.filter((p) => !p.proc || (p.proc === "dep" && !newArr) || (p.proc === "arr" && !newDep));
+      n.mid.forEach((p) => { if (p.proc) { p.proc = null; p.procRole = undefined; p.pAlt = null; } });
+      const mk = (proc, tr, kind) => ATO.expand(proc, tr).map((q) => { const w = lib.byName[q.name.toUpperCase()] || lib.byName[q.name]; return { id: newId(), name: q.name, ident: null, type: "USER WAYPOINT", lat: w.lat, lon: w.lon, lib: "ato", wid: w.id, proc: kind, procRole: q.role, pAlt: isNum(q.alt) ? q.alt : null, alt: null, msa: null, wind: null, rem: blankRem() }; });
+      if (newDep) n.mid.unshift(...mk(newDep, newDepTr, "dep"));
+      if (newArr) n.mid.push(...mk(newArr, newArrTr, "arr"));
+      n.mid.forEach((p) => { p.alt = null; p.msa = null; p.wind = null; p.rem = blankRem(); });
+      n.depProc = newDep ? newDep.id : null; n.arrProc = newArr ? newArr.id : null; n.depTr = newDepTr; n.arrTr = newArrTr;
       n.destPt = { alt: null, msa: null, wind: null, rem: Object.assign(blankRem(), { fullStop: true }) };
       n.id = null; n.finalKey = null; n.finalSig = null; n.toTime = ""; n.offBlock = ""; n.blockMin = null;
       return n;
@@ -1091,32 +1133,244 @@
     /* ===================================================== admin: ATO point placement ===================================================== */
     async function saveAto(name, lat, lon, id, notes) {
       try { await Auth.rpc("admin_upsert_waypoint", { p_id: id || null, p_name: name, p_ident: null, p_lat: +lat.toFixed(6), p_lon: +lon.toFixed(6), p_notes: notes || null }); toast(name + " saved"); }
-      catch (e) { toast("Could not save " + name + ": " + dbErr(e)); }
+      catch (e) { toast("Could not save " + name + ": " + dbErr(e)); return false; }
+      return true;
+    }
+    // every ATO point name: plate list, names used by procedures (incl. admin edits) and all global library points
+    function atoEntries() {
+      const used = new Set(ATO.pointNames(procs).map((n) => n.toUpperCase()));
+      const m = new Map();
+      ATO.points.forEach((p) => m.set(p.name.toUpperCase(), { name: p.name, desc: p.desc, builtin: true }));
+      ATO.pointNames(procs).forEach((n) => { if (!m.has(n.toUpperCase())) m.set(n.toUpperCase(), { name: n, desc: "", builtin: false }); });
+      lib.ato.forEach((w) => { if (!m.has(w.name.toUpperCase())) m.set(w.name.toUpperCase(), { name: w.name, desc: w.notes || "", builtin: false }); });
+      return Array.from(m.values()).sort((a, b) => a.name.localeCompare(b.name)).map((e) => {
+        const w = lib.byName[e.name] || lib.byName[e.name.toUpperCase()] || null;
+        return Object.assign(e, { w, unused: !e.builtin && !used.has(e.name.toUpperCase()) });
+      });
     }
     function renderAto() {
       if (profile.role !== "admin") return;
-      byId("atoList").innerHTML = ATO.points.map((p) => {
-        const w = lib.byName[p.name];
-        return `<button type="button" data-ato="${esc(p.name)}" class="${placing === p.name ? "sel" : ""}" title="${esc(p.desc)}">${esc(p.name)}<small>${w ? "placed" : "not placed"}</small></button>`;
+      byId("atoList").innerHTML = atoEntries().map((p) => {
+        const w = p.w, tip = (p.desc || "") + (w && w.notes && w.notes !== p.desc ? "\n" + w.notes : "");
+        return `<div class="arow${p.unused ? " unused" : ""}"><button type="button" class="pt ${placing === p.name ? "sel" : ""}" data-ato="${esc(p.name)}" title="${esc(tip)}">${esc(p.name)}<small>${w ? "placed" : "not placed"}${p.unused ? " · unused" : ""}</small></button>`
+          + (w ? `<button type="button" class="mini" data-ar="${esc(p.name)}">Rename</button><button type="button" class="mini" data-ad="${esc(p.name)}">Delete</button>` : "") + "</div>";
       }).join("");
+      byId("atoNames").innerHTML = atoEntries().map((p) => `<option value="${esc(p.name)}">`).join("");
     }
-    byId("atoList").addEventListener("click", (e) => {
-      const b = e.target.closest("[data-ato]"); if (!b) return;
-      const w = lib.byName[b.dataset.ato];
-      placing = placing === b.dataset.ato ? null : b.dataset.ato;
+    function startPlacing(name) {
+      const w = lib.byName[name];
+      placing = placing === name ? null : name;
       byId("map").classList.toggle("placing", !!placing);
       const h = byId("mhint"); h.hidden = !placing; h.textContent = placing ? `Click the map to place ${placing}${w ? " (replaces its position)" : ""}. Click the name again to cancel.` : "";
       if (placing && w) map.setView([w.lat, w.lon], Math.max(map.getZoom(), 11));
       if (placing && window.matchMedia("(max-width:900px)").matches) setSheet("peek");
       renderAto();
+    }
+    const globalNameTaken = (n, exceptId) => lib.ato.some((w) => w.id !== exceptId && w.name.toUpperCase() === n.toUpperCase());
+    byId("atoList").addEventListener("click", async (e) => {
+      const rn = e.target.closest("[data-ar]"), del = e.target.closest("[data-ad]");
+      if (rn) {
+        const w = lib.byName[rn.dataset.ar]; if (!w) return;
+        const r = await dialog(`<h3>Rename ATO point</h3><label>Name (1-40 characters)<input name="n" maxlength="40" value="${esc(w.name)}"></label><label>Notes<input name="t" maxlength="500" value="${esc(w.notes || "")}"></label>
+          <p class="fine">Procedures reference points by name: a procedure that still uses the old name will show it as not placed until it is edited.</p>
+          <div class="btns"><button type="button" data-v="no">Cancel</button><button type="button" class="pri" data-v="ok">Rename</button></div>`);
+        const n = String(r.f.n || "").trim().toUpperCase();
+        if (r.v !== "ok") return;
+        if (!n || n.length > 40) return toast("The name must be 1 to 40 characters");
+        if (globalNameTaken(n, w.id)) return toast(n + " already exists");
+        if (await saveAto(n, w.lat, w.lon, w.id, String(r.f.t || "").trim())) await loadWaypoints();
+        return;
+      }
+      if (del) {
+        const w = lib.byName[del.dataset.ad]; if (!w) return;
+        if (!confirm(`Delete the ATO point ${w.name}? Procedures that use it will show it as not placed. This cannot be undone.`)) return;
+        try { await Auth.rpc("admin_delete_waypoint", { p_id: w.id }); toast(w.name + " deleted"); await loadWaypoints(); }
+        catch (err) { toast("Could not delete " + w.name + ": " + dbErr(err)); }
+        return;
+      }
+      const b = e.target.closest("[data-ato]"); if (b) startPlacing(b.dataset.ato);
+    });
+    byId("atoNew").addEventListener("click", async () => {
+      const r = await dialog(`<h3>New ATO point</h3><label>Name (1-40 characters, upper case)<input name="n" maxlength="40" autocapitalize="characters"></label>
+        <div class="btns"><button type="button" data-v="no">Cancel</button><button type="button" class="pri" data-v="ok">Place on the map</button></div>`);
+      if (r.v !== "ok") return;
+      const n = String(r.f.n || "").trim().toUpperCase();
+      if (!n || n.length > 40) return toast("The name must be 1 to 40 characters");
+      if (globalNameTaken(n) || ATO.points.some((p) => p.name.toUpperCase() === n && lib.byName[n])) return toast(n + " already exists");
+      placing = null; startPlacing(n);
     });
     async function placeAt(latlng) {
       const name = placing, p = ATO.points.find((x) => x.name === name), w = lib.byName[name];
       if (!name) return;
       placing = null; byId("map").classList.remove("placing"); byId("mhint").hidden = true;
-      await saveAto(name, latlng.lat, latlng.lng, w && w.id, p && p.desc);
+      await saveAto(name, latlng.lat, latlng.lng, w && w.id, p ? p.desc : w && w.notes);
       await loadWaypoints();
     }
+
+    /* ===================================================== admin: ATO procedure editor ===================================================== */
+    const procRowOf = (id) => procRows.find((r) => r && r.id === id) || null;
+    const defaultProc = (id) => ATO.procedures.find((p) => p.id === id) || null;
+    function renderProcAdmin() {
+      if (profile.role !== "admin") return;
+      const edited = new Set(procRows.filter((r) => r && !r.hidden).map((r) => r.id));
+      const items = procs.map((p) => ({ p, hidden: false, edited: edited.has(p.id) }));
+      procRows.filter((r) => r && r.hidden).forEach((r) => {
+        const base = defaultProc(r.id), d = ATO.normalize(Object.assign({}, base || {}, r.data || {}, { id: r.id }));
+        items.push({ p: d, hidden: true, edited: false });
+      });
+      items.sort((a, b) => a.p.airport.localeCompare(b.p.airport) || a.p.kind.localeCompare(b.p.kind) || a.p.name.localeCompare(b.p.name));
+      let h = "", ap = null;
+      items.forEach((it) => {
+        if (it.p.airport !== ap) { ap = it.p.airport; h += `<div class="pg">${esc(ap)}</div>`; }
+        h += `<div class="prow${it.hidden ? " hid" : ""}"><span class="nm">${esc(it.p.name)} <small>${it.p.kind === "dep" ? "DEP" : "ARR"}</small>${it.edited ? '<span class="bdg">edited</span>' : ""}${it.hidden ? '<span class="bdg">hidden</span>' : ""}${!defaultProc(it.p.id) && !it.hidden ? '<span class="bdg">custom</span>' : ""}</span>`
+          + (it.hidden ? `<button type="button" data-pshow="${esc(it.p.id)}">Show</button>` : `<button type="button" data-pedit="${esc(it.p.id)}">Edit</button>`) + "</div>";
+      });
+      byId("procList").innerHTML = h || '<p class="fine">No procedures.</p>';
+    }
+    const slugOf = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+    function newProcId(airport, kind, name) {
+      const taken = new Set(procs.map((p) => p.id).concat(procRows.map((r) => r.id), ATO.procedures.map((p) => p.id)));
+      const base = `${airport}-${kind}-${slugOf(name) || "NEW"}`.toUpperCase().slice(0, 55);
+      let id = base, k = 2;
+      while (taken.has(id)) id = base + "-" + k++;
+      return id;
+    }
+    // draft -> the JSON stored in ato_procedures (or an error text)
+    function procData(d) {
+      const err = (m) => ({ err: m });
+      const airport = icaoOf(String(d.airport || "").trim());
+      if (!airport) return err("Airport: pick one of the LAT airports");
+      const name = String(d.name || "").trim(), gate = String(d.gate || "").trim();
+      if (name.length < 1 || name.length > 60) return err("Name must be 1 to 60 characters");
+      if (gate.length < 1 || gate.length > 40) return err("Gate point must be 1 to 40 characters");
+      const nn = (v, what) => { if (v === "" || v == null) return null; const x = Number(v); return Number.isFinite(x) && x >= 0 ? x : NaN; };
+      const min = nn(d.min), nm = nn(d.nm), alt = nn(d.alt), xm = nn(d.extraMin);
+      if ([min, nm, alt, xm].some((x) => Number.isNaN(x))) return err("Minutes, NM, altitude and extra minutes must be numbers");
+      if ((min === null) !== (nm === null)) return err("Give both minutes and NM, or neither");
+      const out = { airport, kind: d.kind === "arr" ? "arr" : "dep", name, gate, min, nm, alt, dualOnly: !!d.dualOnly, soloOnly: !!d.soloOnly, extraMin: xm || 0, extraMinDest: d.extraMinDest || {}, plate: d.plate || "", notes: String(d.notes || "").trim(), transitions: [] };
+      if (out.dualOnly && out.soloOnly) return err("A procedure cannot be both dual-only and solo-only");
+      for (const t of d.transitions || []) {
+        const tn = String(t.name || "").trim();
+        if (!tn) return err("Every transition needs a name");
+        if (t.dualOnly && t.soloOnly) return err(tn + ": cannot be both dual-only and solo-only");
+        const pts = [];
+        for (const q of t.points || []) {
+          const pn = String(q.name || "").trim();
+          if (!pn) return err(tn + ": every point needs a name");
+          if (pn.length > 40) return err(pn + ": point names are at most 40 characters");
+          const a = nn(q.alt); if (Number.isNaN(a)) return err(pn + ": altitude must be a number");
+          pts.push({ name: pn, alt: a });
+        }
+        out.transitions.push({ id: t.id || "", name: tn, dualOnly: !!t.dualOnly, soloOnly: !!t.soloOnly, notes: String(t.notes || "").trim(), points: pts });
+      }
+      return { data: out };
+    }
+    const procEditorHtml = (d, flags) => `<h3>${flags.isNew ? "New ATO procedure" : "Edit ATO procedure"}</h3>
+      <div id="peBody"></div>
+      <div class="btns">
+        <button type="button" data-v="no">Cancel</button>
+        ${flags.isDefault ? '<button type="button" data-v="reset">Reset to plate default</button>' : ""}
+        ${!flags.isNew && !flags.isDefault ? '<button type="button" data-v="del">Delete</button>' : ""}
+        ${!flags.isNew ? '<button type="button" data-v="hide">Hide</button>' : ""}
+        <button type="button" class="pri" data-v="save">Save</button>
+      </div>`;
+    function procEditorBody(d) {
+      const v = (x) => (x === null || x === undefined ? "" : esc(String(x)));
+      let h = `<div class="g2">
+        <label>Airport<input data-f="airport" list="aptlist" value="${v(d.airport)}" autocapitalize="characters"></label>
+        <label>Kind<select data-f="kind"><option value="dep"${d.kind === "dep" ? " selected" : ""}>Departure</option><option value="arr"${d.kind === "arr" ? " selected" : ""}>Arrival</option></select></label>
+        <label>Name<input data-f="name" maxlength="60" value="${v(d.name)}"></label>
+        <label>Gate point (exit / entry)<input data-f="gate" list="atoNames" maxlength="40" value="${v(d.gate)}"></label>
+        <label>Time at gate (min)<input type="number" min="0" step="1" data-f="min" value="${v(d.min)}"></label>
+        <label>Distance at gate (NM)<input type="number" min="0" step="1" data-f="nm" value="${v(d.nm)}"></label>
+        <label>Altitude (ft)<input type="number" min="0" step="100" data-f="alt" value="${v(d.alt)}"></label>
+        <label>Extra minutes (full stop)<input type="number" min="0" step="1" data-f="extraMin" value="${v(d.extraMin || "")}"></label>
+        <label class="ck2"><input type="checkbox" data-f="dualOnly"${d.dualOnly ? " checked" : ""}> Dual only</label>
+        <label class="ck2"><input type="checkbox" data-f="soloOnly"${d.soloOnly ? " checked" : ""}> Solo only</label>
+      </div><label>Notes<textarea data-f="notes" rows="3">${v(d.notes)}</textarea></label><h4>Transitions</h4>`;
+      (d.transitions || []).forEach((t, i) => {
+        h += `<div class="tr"><div class="g2"><label>Transition name<input data-t="${i}" data-f="tn" maxlength="60" value="${v(t.name)}"></label>
+          <label class="ck2"><input type="checkbox" data-t="${i}" data-f="td"${t.dualOnly ? " checked" : ""}> Dual only</label>
+          <label class="ck2"><input type="checkbox" data-t="${i}" data-f="ts"${t.soloOnly ? " checked" : ""}> Solo only</label></div>
+          <label>Notes<input data-t="${i}" data-f="tnotes" value="${v(t.notes)}"></label>
+          <div class="fine">Points in flying order (${d.kind === "arr" ? "toward the airport, the gate comes last" : "away from the airport, the gate comes first"}), altitude in ft</div>`;
+        (t.points || []).forEach((q, j) => {
+          h += `<div class="tp"><input data-t="${i}" data-p="${j}" data-f="pn" list="atoNames" maxlength="40" value="${v(q.name)}" placeholder="Point name" aria-label="Point name"><input type="number" step="100" data-t="${i}" data-p="${j}" data-f="pa" value="${v(q.alt)}" placeholder="alt" aria-label="Altitude">
+            <button type="button" data-a="up" data-t="${i}" data-p="${j}" title="Move up">↑</button><button type="button" data-a="down" data-t="${i}" data-p="${j}" title="Move down">↓</button><button type="button" data-a="delp" data-t="${i}" data-p="${j}" title="Remove point">✕</button></div>`;
+        });
+        h += `<button type="button" data-a="addp" data-t="${i}">+ point</button> <button type="button" data-a="delt" data-t="${i}">✕ transition</button></div>`;
+      });
+      return h + '<button type="button" data-a="addt">+ transition</button>';
+    }
+    async function editProc(id) {
+      const isNew = !id, base = id ? procOf(id) : null;
+      if (!isNew && !base) return;
+      const isDefault = !!(id && defaultProc(id));
+      let draft = JSON.parse(JSON.stringify(base || { airport: state.dep ? icaoOf(state.dep) || "KGYR" : "KGYR", kind: "dep", name: "", gate: "", min: null, nm: null, alt: null, dualOnly: false, soloOnly: false, extraMin: 0, extraMinDest: {}, plate: "", notes: "", transitions: [] }));
+      for (;;) {
+        const r = await dialog(procEditorHtml(draft, { isNew, isDefault }), { cls: "pe", onOpen: (d) => {
+          const body = d.querySelector("#peBody");
+          const render = () => { body.innerHTML = procEditorBody(draft); };
+          render();
+          const sync = (el) => {
+            const f = el.dataset.f; if (!f) return;
+            const t = el.dataset.t !== undefined ? draft.transitions[+el.dataset.t] : null, q = t && el.dataset.p !== undefined ? t.points[+el.dataset.p] : null;
+            const val = el.type === "checkbox" ? el.checked : el.value;
+            if (q) { if (f === "pn") q.name = val; else if (f === "pa") q.alt = val === "" ? null : +val; }
+            else if (t) { if (f === "tn") t.name = val; else if (f === "td") t.dualOnly = val; else if (f === "ts") t.soloOnly = val; else if (f === "tnotes") t.notes = val; }
+            else if (["min", "nm", "alt", "extraMin"].includes(f)) draft[f] = val === "" ? null : +val;
+            else draft[f] = val;
+            if (f === "kind") render();
+          };
+          body.addEventListener("input", (e) => sync(e.target));
+          body.addEventListener("change", (e) => sync(e.target));
+          body.addEventListener("click", (e) => {
+            const b = e.target.closest("[data-a]"); if (!b) return;
+            const a = b.dataset.a, t = draft.transitions[+b.dataset.t], j = +b.dataset.p;
+            if (a === "addt") draft.transitions.push({ id: "", name: "", dualOnly: false, soloOnly: false, notes: "", points: [] });
+            else if (a === "delt") draft.transitions.splice(+b.dataset.t, 1);
+            else if (a === "addp") t.points.push({ name: "", alt: null });
+            else if (a === "delp") t.points.splice(j, 1);
+            else if (a === "up" && j > 0) t.points.splice(j - 1, 0, t.points.splice(j, 1)[0]);
+            else if (a === "down" && j < t.points.length - 1) t.points.splice(j + 1, 0, t.points.splice(j, 1)[0]);
+            render();
+          });
+        } });
+        if (r.v === "save" || r.v === "hide") {
+          const res = procData(draft);
+          if (res.err) { toast(res.err); continue; }
+          const pid = isNew ? newProcId(res.data.airport, res.data.kind, res.data.name) : id;
+          try {
+            await Auth.rpc("admin_upsert_procedure", { p_id: pid, p_data: res.data, p_hidden: r.v === "hide" });
+            toast(r.v === "hide" ? res.data.name + " hidden" : res.data.name + " saved");
+          } catch (e) { toast("Could not save: " + (/forbidden/.test(String((e && e.message) || e)) ? "admin only" : dbErr(e))); continue; }
+        } else if (r.v === "reset" || r.v === "del") {
+          if (!confirm(r.v === "reset" ? "Reset this procedure to the plate default? Your edits are lost." : "Delete this procedure? This cannot be undone.")) continue;
+          try { await Auth.rpc("admin_delete_procedure", { p_id: id }); toast(r.v === "reset" ? "Reset to plate default" : "Procedure deleted"); }
+          catch (e) { toast("Could not " + r.v + ": " + dbErr(e)); continue; }
+        } else return;
+        await afterProcChange();
+        return;
+      }
+    }
+    async function afterProcChange() {
+      await loadProcs();
+      // a selected procedure that no longer exists (deleted/hidden) is cleared; edited ones keep their checkpoints until picked again
+      if (state.depProc && !procOf(state.depProc)) { state.mid = state.mid.filter((p) => p.proc !== "dep"); state.depProc = null; state.depTr = null; }
+      if (state.arrProc && !procOf(state.arrProc)) { state.mid = state.mid.filter((p) => p.proc !== "arr"); state.arrProc = null; state.arrTr = null; }
+      renderProcSelects(); renderProcAdmin(); renderAto(); changed(true);
+    }
+    byId("procNew").addEventListener("click", () => editProc(null));
+    byId("procList").addEventListener("click", async (e) => {
+      const ed = e.target.closest("[data-pedit]"), sh = e.target.closest("[data-pshow]");
+      if (ed) return editProc(ed.dataset.pedit);
+      if (sh) {
+        const row = procRowOf(sh.dataset.pshow); if (!row) return;
+        try { await Auth.rpc("admin_upsert_procedure", { p_id: row.id, p_data: row.data || {}, p_hidden: false }); toast("Procedure shown"); }
+        catch (err) { return toast("Could not show it: " + dbErr(err)); }
+        await afterProcChange();
+      }
+    });
 
     /* ===================================================== bottom sheet (narrow screens) ===================================================== */
     const panel = byId("panel"), SHEETS = ["peek", "half", "full"];

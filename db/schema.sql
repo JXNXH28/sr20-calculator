@@ -572,6 +572,70 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------- admin: ATO procedures (overrides of the defaults in ato.js)
+
+create table if not exists public.ato_procedures (
+  id         text primary key check (char_length(id) between 1 and 60),
+  data       jsonb not null check (pg_column_size(data) <= 20000),
+  hidden     boolean not null default false,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references public.profiles(id) on delete set null
+);
+alter table public.ato_procedures enable row level security;
+drop policy if exists ato_procedures_select on public.ato_procedures;
+create policy ato_procedures_select on public.ato_procedures for select to authenticated using (true);
+revoke all on public.ato_procedures from anon;
+revoke insert, update, delete, truncate on public.ato_procedures from authenticated;
+grant select on public.ato_procedures to authenticated;
+
+create or replace function public.admin_upsert_procedure(p_id text, p_data jsonb, p_hidden boolean default false)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'forbidden';
+  end if;
+  if p_id is null or p_id !~ '^[A-Za-z0-9._-]{1,60}$'
+     or p_data is null or jsonb_typeof(p_data) <> 'object' or pg_column_size(p_data) > 20000 then
+    raise exception 'invalid_procedure';
+  end if;
+  if not coalesce(p_hidden, false) then
+    if char_length(coalesce(p_data->>'airport', '')) not between 3 and 4
+       or coalesce(p_data->>'kind', '') not in ('dep', 'arr')
+       or char_length(coalesce(p_data->>'name', '')) not between 1 and 60
+       or char_length(coalesce(p_data->>'gate', '')) not between 1 and 40 then
+      raise exception 'invalid_procedure';
+    end if;
+  end if;
+  insert into public.ato_procedures (id, data, hidden, updated_at, updated_by)
+  values (p_id, p_data, coalesce(p_hidden, false), now(), auth.uid())
+  on conflict (id) do update
+    set data = excluded.data, hidden = excluded.hidden, updated_at = now(), updated_by = auth.uid();
+end;
+$$;
+
+create or replace function public.admin_delete_procedure(p_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'forbidden';
+  end if;
+  delete from public.ato_procedures where id = p_id;
+end;
+$$;
+
+revoke execute on function public.admin_upsert_procedure(text, jsonb, boolean) from public, anon;
+revoke execute on function public.admin_delete_procedure(text)                 from public, anon;
+grant execute on function public.admin_upsert_procedure(text, jsonb, boolean) to authenticated;
+grant execute on function public.admin_delete_procedure(text)                 to authenticated;
+
 -- ---------------------------------------------------------------- OFP RLS and privileges
 
 alter table public.ofps      enable row level security;
@@ -603,6 +667,9 @@ grant execute on function public.admin_upsert_waypoint(bigint, text, text, doubl
 grant execute on function public.admin_delete_waypoint(bigint)                                                  to authenticated;
 
 -- ---------------------------------------------------------------- OFP rollback (run manually, destroys OFP data)
+--   drop function if exists public.admin_delete_procedure(text);
+--   drop function if exists public.admin_upsert_procedure(text, jsonb, boolean);
+--   drop table if exists public.ato_procedures;
 --   drop function if exists public.admin_delete_waypoint(bigint);
 --   drop function if exists public.admin_upsert_waypoint(bigint, text, text, double precision, double precision, text);
 --   drop function if exists public.delete_waypoint(bigint);

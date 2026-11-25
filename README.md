@@ -58,6 +58,10 @@ fuel, take-off fuel and registration filled in (or offers to replace the route /
   personal points.
 - Rules: time and fuel follow the B02 rules (see `nav.js`, tested with `node test.js`); safety checks (airspace,
   obstacles, terrain clearance) are in `safety.js`.
+- ATO procedures: `ato.js` holds the plate defaults (departures/arrivals with named transitions). Choosing a procedure and a
+  transition inserts every plate landmark as a checkpoint with the plate altitude; the B02 fixed time/NM applies only to the
+  gate leg at KGYR. Admins edit, add, hide or reset procedures and manage ATO points (new, rename, delete, place) on
+  `ofp.html`; edits are stored in the `ato_procedures` table (re-run the OFP part of `db/schema.sql` to create it).
 - Tokens: **3 tokens once per flight**. Finalising the same OFP again with the same date, departure and destination is
   free; a different flight costs 3 again. Printing and export need a finalised OFP.
 - **Verify everything on the chart.** The checks and the nav log are an aid, not a substitute for flight preparation.
