@@ -200,14 +200,24 @@
     /* ===================================================== map ===================================================== */
     L.Icon.Default.imagePath = "vendor/images/";
     const map = L.map("map", { zoomControl: true, maxZoom: 14, minZoom: 5, tap: true, doubleClickZoom: false }).setView([33.42, -112.38], 10);
-    const tileOpts = { maxNativeZoom: 12, maxZoom: 14, attribution: "FAA", keepBuffer: 3 };
-    const tiles = { tac: L.tileLayer(tileUrl("VFR_Terminal"), tileOpts), sect: L.tileLayer(tileUrl("VFR_Sectional"), tileOpts) };
-    let baseMode = ["auto", "tac", "sect"].includes(lsGet("ofp.base")) ? lsGet("ofp.base") : "auto";
+    // FAA tiles exist only to z12. detectRetina: on HiDPI each 256px tile covers 128 CSS px (requests one zoom higher, capped at z12 by maxNativeZoom).
+    // Leaflet adds zoomOffset after clamping to maxNativeZoom, so on retina the native cap must be 11 (+1 offset = z12)
+    const tileOpts = { maxNativeZoom: L.Browser.retina ? 11 : 12, maxZoom: 14, attribution: "FAA", keepBuffer: 3, detectRetina: true };
+    const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
+    const OSM_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+    map.createPane("osmOverlay"); map.getPane("osmOverlay").style.zIndex = 250; // above the chart tiles (200), below airspace/route/markers (400+)
+    const tiles = {
+      tac: L.tileLayer(tileUrl("VFR_Terminal"), tileOpts), sect: L.tileLayer(tileUrl("VFR_Sectional"), tileOpts),
+      osm: L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR, keepBuffer: 3 }),
+    };
+    let osmOverlay = null;
+    let baseMode = ["auto", "tac", "sect", "osm"].includes(lsGet("ofp.base")) ? lsGet("ofp.base") : "auto";
     let tacBad = null, tacErr = 0, curBase = null;
     function applyBase() {
-      const want = baseMode === "tac" ? "tac" : baseMode === "sect" ? "sect" : tacBad || map.getZoom() < 10 ? "sect" : "tac";
+      const want = baseMode === "tac" ? "tac" : baseMode === "sect" ? "sect" : baseMode === "osm" ? "osm" : tacBad || map.getZoom() < 10 ? "sect" : "tac";
       if (want !== curBase) {
         if (curBase) map.removeLayer(tiles[curBase]);
+        map.setMaxZoom(want === "osm" ? 17 : 14);
         tiles[want].addTo(map); tiles[want].bringToBack(); curBase = want;
       }
       $$("#mapctl [data-base]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.base === baseMode)));
@@ -244,7 +254,28 @@
     });
     layers.verts = L.layerGroup().addTo(map);
     layers.rubber = L.layerGroup().addTo(map);
+    // OpenStreetMap overlay on top of the chart (own pane), with opacity
+    {
+      const on = layerOn.osm === true;
+      let op = parseInt(lsGet("ofp.osmop"), 10); if (!(op >= 0 && op <= 100)) op = 50;
+      const l = document.createElement("label");
+      l.innerHTML = `<input type="checkbox" data-osm="on"${on ? " checked" : ""}> OpenStreetMap overlay`;
+      const r = document.createElement("label");
+      r.innerHTML = `Opacity <input type="range" min="0" max="100" step="5" value="${op}" data-osm="op" id="osmOp" aria-label="OpenStreetMap overlay opacity"> <span id="osmOpV">${op}%</span>`;
+      byId("lays").appendChild(l); byId("lays").appendChild(r);
+      osmOverlay = L.tileLayer(OSM_URL, { pane: "osmOverlay", maxZoom: 19, opacity: op / 100, attribution: OSM_ATTR, keepBuffer: 3 });
+      if (on) osmOverlay.addTo(map);
+      byId("lays").addEventListener("input", (e) => {
+        if (e.target.dataset.osm !== "op") return;
+        osmOverlay.setOpacity(e.target.value / 100); byId("osmOpV").textContent = e.target.value + "%"; lsSet("ofp.osmop", e.target.value);
+      });
+    }
     byId("lays").addEventListener("change", (e) => {
+      if (e.target.dataset.osm === "on") {
+        layerOn.osm = e.target.checked; lsSet("ofp.layers", JSON.stringify(layerOn));
+        if (e.target.checked) osmOverlay.addTo(map); else map.removeLayer(osmOverlay);
+        return;
+      }
       const k = e.target.dataset.layer; if (!k) return;
       layerOn[k] = e.target.checked; lsSet("ofp.layers", JSON.stringify(layerOn));
       if (e.target.checked) layers[k].addTo(map); else map.removeLayer(layers[k]);

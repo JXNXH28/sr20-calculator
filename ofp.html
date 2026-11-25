@@ -196,7 +196,7 @@ dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #
     <div id="map"></div>
     <div id="msearch"><input id="q" type="search" placeholder="Search airport, point or ident…" autocomplete="off" aria-label="Search points"><ul id="qres"></ul></div>
     <div id="mapctl">
-      <div class="seg" role="group" aria-label="Chart"><button type="button" data-base="auto" aria-pressed="true" title="TAC when zoomed in, sectional when zoomed out">Auto</button><button type="button" data-base="tac" aria-pressed="false">TAC</button><button type="button" data-base="sect" aria-pressed="false">Sect</button></div>
+      <div class="seg" role="group" aria-label="Chart"><button type="button" data-base="auto" aria-pressed="true" title="TAC when zoomed in, sectional when zoomed out">Auto</button><button type="button" data-base="tac" aria-pressed="false">TAC</button><button type="button" data-base="sect" aria-pressed="false">Sect</button><button type="button" data-base="osm" aria-pressed="false" title="OpenStreetMap street map">OSM</button></div>
       <details><summary>Layers</summary><div class="lays" id="lays"></div></details>
     </div>
     <div id="mhint" hidden></div>
@@ -267,6 +267,7 @@ dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #
       </div></details>
       <details class="card" id="secAto" hidden><summary>ATO points (admin)</summary><div class="in">
         <p class="note">Click a name, then click the map to place it. Placed points can be dragged on the map.</p>
+        <p class="note">Tip: turn on the OpenStreetMap overlay to find bridges, roads and landmarks.</p>
         <div id="atoList"></div>
       </div></details>
       <p class="fine"><b>Training aid only.</b> Verify every value against B02, the POH and the chart before flight. Automatic MSA, airspace and glide values (when shown) must be verified on the chart. Charts: FAA VFR Terminal and Sectional tiles.</p>
