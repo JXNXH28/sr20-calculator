@@ -1936,7 +1936,7 @@
       dest = code(h.dest),
       tm = /^([01]\d|2[0-3])([0-5]\d)$/.exec(String(h.depTime || "")),
       n = (v, lo, hi) => (typeof v === "number" && isFinite(v) && v >= lo && v <= hi ? v : null);
-    if (!dep || !dest || dep === dest || !/^\d{4}-\d\d-\d\d$/.test(String(h.date || ""))) return null;
+    if (!dep || !dest || !/^\d{4}-\d\d-\d\d$/.test(String(h.date || ""))) return null;
     const durMin = n(h.durMin, 1, 1440),
       tripFuel = n(h.tripFuel, 0, 200),
       takeoffFuel = n(h.takeoffFuel, 0, 200);
@@ -1947,7 +1947,7 @@
   async function applyHandoff() {
     const h = readHandoff();
     history.replaceState(null, "", location.pathname + location.search.replace(/([?&])from=ofp(&|$)/, (m, a, b) => (b ? a : "")).replace(/\?$/, "") + location.hash);
-    if (!h) return;
+    if (!h) return toast("Could not take over the OFP values \u2013 enter them manually");
     const flat = { date: h.date, time: h.time, reg: h.reg, fuelTO: h.takeoffFuel };
     const last = nStops() - 1;
     const empty = !isRes() && nStops() <= 2 && !stop(0) && !stop(1);
