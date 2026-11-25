@@ -414,8 +414,7 @@
     if (pos(o.tas)) tokens.push(Math.round(o.tas) + "kts");
     if (pos(o.ff)) tokens.push(String(Number(o.ff.toFixed(1))) + "gph");
     if (pos(o.alt)) tokens.push(Math.round(o.alt) + "ft");
-    const reg = alnum(o.reg);
-    if (reg) tokens.push(reg);
+    // No tail number: ForeFlight treats a tail without a matching aircraft profile on the device as a waypoint ("Unable to find N848EF")
     if (o.etd instanceof Date && !isNaN(o.etd.getTime())) {
       const e = o.etd, p2 = (n) => String(n).padStart(2, "0");
       tokens.push(e.getUTCFullYear() + p2(e.getUTCMonth() + 1) + p2(e.getUTCDate()) + "T" + p2(e.getUTCHours()) + ":" + p2(e.getUTCMinutes()) + ":" + p2(e.getUTCSeconds()) + "Z");

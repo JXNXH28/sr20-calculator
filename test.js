@@ -435,7 +435,7 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   const e63 = { type: 'AIRPORT', ident: 'E63', lat: 33.3, lon: -112.2 };
   const full = { tas: 152, ff: 12.8, alt: 6500, reg: 'n-123ab', etd };
   const P = 'foreflightmobile://maps/search?q=';
-  streq('ff url full', OPF.foreflightUrl([kgyr, pt, e63], full), P + 'KGYR+332521N%2F1122234W+E63+152kts+12.8gph+6500ft+N123AB+20261124T17%3A05%3A00Z');
+  streq('ff url full', OPF.foreflightUrl([kgyr, pt, e63], full), P + 'KGYR+332521N%2F1122234W+E63+152kts+12.8gph+6500ft+20261124T17%3A05%3A00Z');
   streq('ff url ff 13.0 drops .0', OPF.foreflightUrl([kgyr], { tas: 100, ff: 13.0 }), P + 'KGYR+100kts+13gph');
   streq('ff url only waypoints when opts missing', OPF.foreflightUrl([kgyr, e63], {}), P + 'KGYR+E63');
   streq('ff url no opts', OPF.foreflightUrl([kgyr, e63]), P + 'KGYR+E63');

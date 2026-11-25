@@ -1078,7 +1078,7 @@
           const alts = rows.map((r) => r.alt).filter(isNum);
           // ETD in UTC from date + T/O time in the departure airport's time zone (planMs)
           const etd = /^\d{4}-\d\d-\d\d$/.test(state.date || "") && hhmm(state.toTime) ? new Date(planMs()) : null;
-          const url = OP.foreflightUrl(exportRoute(), { tas: cruise ? cruise.tas : null, ff: cruiseFfOf(rows), alt: alts.length ? Math.max(...alts) : null, reg: state.reg, etd });
+          const url = OP.foreflightUrl(exportRoute(), { tas: cruise ? cruise.tas : null, ff: cruiseFfOf(rows), alt: alts.length ? Math.max(...alts) : null, etd });
           if (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) location.href = url;
           else toast("Opens ForeFlight on iPad/iPhone. Use the .fpl file or Copy route on this device.");
           return;
