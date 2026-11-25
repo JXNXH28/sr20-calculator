@@ -1,0 +1,47 @@
+{
+  "_note": "poly = map-area neatline in image pixel coordinates (x,y from top-left of the FAA GeoTIFF), inset 2-3 px from the drawn border. Collar, legend panels and insets lie outside it. Re-measure with: python3 -I prep.py detect <tif>. build.sh verifies every polygon (prep.py check) and refuses to tile a chart whose map would be cut.",
+  "layers": {
+    "tac": {
+      "minZoom": 9,
+      "maxZoom": 14,
+      "warpZoom": 13,
+      "charts": [
+        {
+          "name": "Phoenix",
+          "geoname": "Phoenix",
+          "tif": "*TAC.tif",
+          "size": [10518, 7548],
+          "poly": [[3054, 583], [10462, 583], [10462, 7396], [3054, 7396]]
+        }
+      ]
+    },
+    "sec": {
+      "minZoom": 6,
+      "maxZoom": 13,
+      "warpZoom": 12,
+      "charts": [
+        {
+          "name": "Phoenix",
+          "geoname": "Phoenix",
+          "tif": "*SEC.tif",
+          "size": [17908, 12299],
+          "poly": [[2398, 660], [17890, 660], [17895, 12249], [1988, 12248]]
+        },
+        {
+          "name": "Los Angeles",
+          "geoname": "Los Angeles",
+          "tif": "*SEC.tif",
+          "size": [16645, 12349],
+          "poly": [[1590, 1369], [16640, 1374], [16640, 3000], [16585, 3100], [16585, 12050], [15500, 12094], [14000, 12156], [12500, 12189], [11000, 12214], [8000, 12230], [6500, 12223], [5000, 12205], [4692, 12203], [4692, 8080], [543, 8080], [608, 6254], [1590, 6254]]
+        },
+        {
+          "name": "Las Vegas",
+          "geoname": "Las Vegas",
+          "tif": "*SEC.tif",
+          "size": [17849, 12280],
+          "poly": [[3119, 2], [17846, 2], [17846, 11755], [2698, 11755]]
+        }
+      ]
+    }
+  }
+}
