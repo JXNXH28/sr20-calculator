@@ -297,6 +297,68 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   ok('usable true with coordinates', ATO.usable(bk, { 'LIBERTY BRIDGE': { lat: 33.3, lon: -112.6 } }));
 }
 // ==== end ato ====
+// ==== ato2 tests (OFP) ====
+{
+  const ATO = require('./ato.js');
+  const ok = (name, c) => { if (!c) fail++; console.log((c ? 'ok   ' : 'FAIL ') + name); };
+  const byId = (id) => ATO.procedures.find((p) => p.id === id);
+  const bk = byId('GYR-DEP-BUCKEYE'), gap = byId('GYR-ARR-GAP');
+  const wx = ATO.expand(bk, 'GYR-DEP-BUCKEYE.WEST');
+  ok('Buckeye DEP Western: LIBERTY BRIDGE gate first, then Arlington, ends at Hassayampa/I-10',
+    wx[0].name === 'LIBERTY BRIDGE' && wx[0].role === 'gate' && wx[1].name === 'ARLINGTON' && wx[1].alt === 3000 && wx[1].role === 'trans'
+    && wx[wx.length - 1].name === 'HASSAYAMPA I-10' && wx[wx.length - 1].alt === 5000);
+  const tf = ATO.expand(gap, 'GYR-ARR-GAP.TIREFARM');
+  ok('Gap ARR Tire Farm: TIRE FARM first, THE GAP last (gate)',
+    tf[0].name === 'TIRE FARM' && tf[0].alt === 3500 && tf[tf.length - 1].name === 'THE GAP' && tf[tf.length - 1].role === 'gate' && tf.filter((p) => p.role === 'gate').length === 1);
+  ok('unknown / empty transition -> only the gate', ['NOPE', '', null, undefined].every((t) => { const e = ATO.expand(bk, t); return e.length === 1 && e[0].name === 'LIBERTY BRIDGE' && e[0].role === 'gate'; }));
+  ok('transition ids are <procId>.<SHORT> and unique', ATO.procedures.every((p) => p.transitions.every((t) => t.id.indexOf(p.id + '.') === 0))
+    && new Set([].concat(...ATO.procedures.map((p) => p.transitions.map((t) => t.id)))).size === [].concat(...ATO.procedures.map((p) => p.transitions)).length);
+  ok('gate and legacy point agree', ATO.procedures.every((p) => p.gate && p.point === p.gate && Array.isArray(p.transitions)));
+  ok('flags per plate: Gap South dual, Twin Lakes Southwest dual, (SOLO) routes stay open to dual flights',
+    gap.transitions.find((t) => t.id === 'GYR-ARR-GAP.SOUTH').dualOnly && byId('GYR-DEP-TWINLAKES').transitions.find((t) => t.name === 'Southwest').dualOnly
+    && !byId('GYR-ARR-LUKEAUX6').transitions.find((t) => t.name === 'Northwest').soloOnly && !bk.transitions.find((t) => t.name === 'Tonopah').soloOnly);
+  ok('Glendale ARR entry at 2100', byId('GEU-ARR-GLENDALE').alt === 2100);
+  // merge
+  const defs = ATO.procedures.slice(0, 3), snap = JSON.stringify(defs);
+  const rows = [
+    { id: 'GYR-DEP-BUCKEYE', data: Object.assign({}, bk, { alt: '2500' }) },
+    { id: 'ZZ-NEW-2', data: { airport: 'KAAA', kind: 'dep', name: 'B proc', gate: 'X2', transitions: [{ name: 'Left', points: [{ name: 'P1', alt: '3000' }] }] } },
+    { id: 'ZZ-NEW-1', data: { airport: 'KAAA', kind: 'dep', name: 'A proc', gate: 'X1' } },
+    { id: 'GYR-DEP-TWINLAKES', hidden: true },
+    null, 'junk', { id: 5, data: {} }, { id: 'BAD', data: 'x' }, { data: { gate: 'Q' } }, { id: 'BAD2' },
+  ];
+  const rowsSnap = JSON.stringify(rows);
+  const m = ATO.merge(defs, rows);
+  ok('merge: override replaces (alt coerced to number)', m.find((p) => p.id === 'GYR-DEP-BUCKEYE').alt === 2500);
+  ok('merge: hidden removes', !m.some((p) => p.id === 'GYR-DEP-TWINLAKES'));
+  ok('merge: order = defaults, then new sorted by airport/kind/name', m.map((p) => p.id).join() === 'GYR-DEP-GILACROSSING,GYR-DEP-BUCKEYE,ZZ-NEW-1,ZZ-NEW-2');
+  const nw = m.find((p) => p.id === 'ZZ-NEW-2');
+  ok('merge: new rows normalized (transition id generated, point alt numeric, flags false)', nw.point === 'X2' && nw.transitions[0].id === 'ZZ-NEW-2.LEFT'
+    && nw.transitions[0].points[0].alt === 3000 && nw.dualOnly === false && nw.transitions[0].soloOnly === false && nw.extraMin === 0 && nw.min === null);
+  ok('merge: malformed rows ignored', m.length === 4 && !m.some((p) => p.id === 'BAD' || p.id === 'BAD2'));
+  ok('merge: inputs not mutated', JSON.stringify(defs) === snap && JSON.stringify(rows) === rowsSnap && ATO.procedures[1].alt === 2000);
+  ok('merge: null / undefined rows keep defaults', ATO.merge(ATO.procedures, null).length === ATO.procedures.length && ATO.merge(ATO.procedures).length === ATO.procedures.length);
+  ok('normalize: empty input is safe', (() => { const n = ATO.normalize(null); return n.transitions.length === 0 && n.extraMin === 0 && n.dualOnly === false && n.soloOnly === false && n.point === n.gate; })());
+  ok('forAirport with a custom list', ATO.forAirport('KAAA', 'dep', m).length === 2 && ATO.forAirport('KAAA', 'dep').length === 0);
+  // usable
+  const W = { 'LIBERTY BRIDGE': { lat: 33.36, lon: -112.6 }, ARLINGTON: { lat: 33.34, lon: -112.76 } };
+  ok('usable: false when a transition point is missing', !ATO.usable(bk, 'GYR-DEP-BUCKEYE.WEST', W));
+  ok('usable: true when all placed (uppercase lookup)', ATO.usable(bk, 'GYR-DEP-BUCKEYE.WEST', Object.assign({ 'hassayampa i-10': null, 'HASSAYAMPA I-10': { lat: 33.45, lon: -112.8 } }, W)));
+  ok('usable: legacy 2-arg form checks the gate only', ATO.usable(bk, W) && !ATO.usable(bk, {}) && ATO.usable(bk, null, W));
+  // B02 numbers
+  const b02 = { 'GYR-DEP-GILACROSSING': ['PIR', 5, 5], 'GYR-DEP-BUCKEYE': ['LIBERTY BRIDGE', 4, 7], 'GYR-DEP-TWINLAKES': ['LIBERTY BRIDGE', 5, 7], 'GYR-DEP-POWERPLANT': ['THE STACK', 5, 6],
+    'GYR-ARR-LUKEAUX6': ['LUKE AUX 6', 3, 7], 'GYR-ARR-GAP': ['THE GAP', 2, 5], 'GYR-ARR-GILACROSSING': ['GILA CROSSING', 6, 14], 'GYR-ARR-POWERPLANT': ['THE STACK', 3, 6] };
+  ok('B02 gate/min/nm unchanged for the 8 KGYR procedures', Object.keys(b02).every((id) => { const p = byId(id), w = b02[id]; return p && p.gate === w[0] && p.min === w[1] && p.nm === w[2]; })
+    && ATO.forAirport('KGYR').length === 8);
+  ok('full-stop +10 on all four KGYR arrivals', ATO.forAirport('KGYR', 'arr').length === 4 && ATO.forAirport('KGYR', 'arr').every((p) => p.extraMin === 10));
+  ok('Power Plant DEP +10 into KGEU, PP dep/arr dual only', byId('GYR-DEP-POWERPLANT').extraMinDest.KGEU === 10 && byId('GYR-DEP-POWERPLANT').dualOnly && byId('GYR-ARR-POWERPLANT').dualOnly);
+  // point names
+  const listed = new Set(ATO.points.map((p) => p.name)), all = ATO.pointNames(ATO.procedures);
+  ok('every gate/transition point is uppercase, <=40 chars and listed in ATO.points',
+    all.length > 20 && all.every((n) => n === n.toUpperCase() && n.length <= 40 && listed.has(n)) && ATO.points.every((p) => p.desc && all.indexOf(p.name) >= 0));
+  ok('pointNames sorted unique', all.join('|') === Array.from(new Set(all)).sort().join('|'));
+}
+// ==== end ato2 ====
 // ==== print tests (OFP) ====
 {
   const OP = require('./ofpprint.js');
