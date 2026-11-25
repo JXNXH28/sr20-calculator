@@ -385,18 +385,38 @@ async function tfrs(states, force) {
     } catch (e) { return result([], false, src); }
   });
 }
-async function metarTaf(icao, force) {
+// Nearest TAF to pos within maxNm (airports without their own TAF, e.g. KGYR) -> {taf, id, distNm} or null
+function nearestTaf(list, pos, maxNm) {
+  let best = null;
+  (list || []).forEach((t) => {
+    const lat = +t.lat, lon = +t.lon;
+    if (!t || !isFinite(lat) || !isFinite(lon)) return;
+    const d = Nav.dist(pos, { lat, lon });
+    if (d <= maxNm && (!best || d < best.distNm)) best = { taf: t, id: String(t.icaoId || ''), distNm: Math.round(d) };
+  });
+  return best;
+}
+// {metars, taf, tafFrom: null | {id, distNm}}; pos {lat, lon} enables the nearest-TAF fallback (50 NM)
+async function metarTaf(icao, force, pos) {
   const src = 'aviationweather.gov', id = String(icao || '').toUpperCase();
-  if (!/^[A-Z0-9]{3,4}$/.test(id)) return result({ metars: [], taf: null }, false, src);
-  return wxCached('mt:' + id, force, async () => {
+  if (!/^[A-Z0-9]{3,4}$/.test(id)) return result({ metars: [], taf: null, tafFrom: null }, false, src);
+  const hasPos = pos && isNum(pos.lat) && isNum(pos.lon);
+  return wxCached('mt:' + id + (hasPos ? ':p' : ''), force, async () => {
     const [m, t] = await Promise.allSettled([jlist('/api/aw/metar?ids=' + id + '&hours=3'), jlist('/api/aw/taf?ids=' + id)]);
-    if (m.status !== 'fulfilled' && t.status !== 'fulfilled') return result({ metars: [], taf: null }, false, src);
-    const taf = t.status === 'fulfilled' && Array.isArray(t.value) ? t.value[0] || null : null;
-    return result({ metars: m.status === 'fulfilled' && Array.isArray(m.value) ? m.value : [], taf }, true, src, Date.now(), { partial: m.status !== 'fulfilled' || t.status !== 'fulfilled' });
+    if (m.status !== 'fulfilled' && t.status !== 'fulfilled') return result({ metars: [], taf: null, tafFrom: null }, false, src);
+    let taf = t.status === 'fulfilled' && Array.isArray(t.value) ? t.value[0] || null : null, tafFrom = null;
+    if (!taf && hasPos) {
+      const d = 0.85, bb = [pos.lat - d, pos.lon - d, pos.lat + d, pos.lon + d].map((v) => v.toFixed(2)).join(',');
+      try {
+        const n = nearestTaf(await jlist('/api/aw/taf?bbox=' + bb), pos, 50);
+        if (n) { taf = n.taf; tafFrom = { id: n.id, distNm: n.distNm }; }
+      } catch (e) { /* no fallback TAF */ }
+    }
+    return result({ metars: m.status === 'fulfilled' && Array.isArray(m.value) ? m.value : [], taf, tafFrom }, true, src, Date.now(), { partial: m.status !== 'fulfilled' || t.status !== 'fulfilled' });
   });
 }
 
-const OfpData = { airspace, airports, navaids, obstacles, terrainMax, windsAloft, hazards, pireps, tfrs, metarTaf, statesFor, decoder: canvasDecode,
+const OfpData = { airspace, airports, navaids, obstacles, terrainMax, windsAloft, hazards, pireps, tfrs, metarTaf, nearestTaf, statesFor, decoder: canvasDecode,
   // exposed for tests and smoke checks
   _urls: { addsUrl, omUrl, terrainTile: (x, y) => TERRAIN + TZ + '/' + x + '/' + y + '.png' }, _omWind: omWind, _norm: { normAirSigmet, normGairmet, normCwa, tfrItems }, TZ };
 if (node) module.exports = OfpData; else root.OfpData = OfpData;

@@ -1704,7 +1704,7 @@
         const lats = route.map((p) => p.lat), lons = route.map((p) => p.lon), pad = 0.1;
         const bb = { s: Math.min(...lats) - pad, n: Math.max(...lats) + pad, w: Math.min(...lons) - pad, e: Math.max(...lons) + pad };
         const depId = icaoOf(state.dep) || state.dep, destId = icaoOf(state.dest) || state.dest;
-        const [hz, pr, tf, dm, am] = await Promise.all([D.hazards(bb, force), D.pireps(bb, force), D.tfrs(D.statesFor(bb), force), D.metarTaf(depId, force), depId === destId ? null : D.metarTaf(destId, force)]);
+        const [hz, pr, tf, dm, am] = await Promise.all([D.hazards(bb, force), D.pireps(bb, force), D.tfrs(D.statesFor(bb), force), D.metarTaf(depId, force, aptCoord(state.dep)), depId === destId ? null : D.metarTaf(destId, force, aptCoord(state.dest))]);
         if (my !== wxGen) return;
         const t0 = legs[0].startMs, t1 = legs[legs.length - 1].endMs, nowMs = Date.now(), far = t0 - nowMs > 12 * 3600e3;
         const mid = Nav.mid(route[0], route[route.length - 1]);
@@ -1712,7 +1712,14 @@
         const items = (hz.data || []).concat(tf.data || []);
         const hits = S.hazardHits(legs, items, { groundFt: gnd });
         const pirs = S.pirepsNear(legs, pr.data || [], 25).filter((x) => x.turb || x.ice);
-        const wxOf = (r, id, eta) => (r && r.ok ? S.vfrWx(r.data.metars, r.data.taf, eta, { ceilFt: 3000, visSm: 5, nowMs: eta }).map((c) => ({ level: c.level === "warn" ? "warn" : "info", text: id + ": " + c.text, code: c.code })) : [{ level: "info", text: `${id}: METAR/TAF unavailable - check your official briefing`, code: "wxMissing" }]);
+        // A TAF borrowed from the nearest airport (own airport has none, e.g. KGYR) is named in the text: "KGYR (TAF KLUF, 8 NM): ..."
+        const wxOf = (r, id, eta) => {
+          if (!(r && r.ok)) return [{ level: "info", text: `${id}: METAR/TAF unavailable - check your official briefing`, code: "wxMissing" }];
+          const tf = r.data.tafFrom, pre = (c) => (tf && /^TAF/.test(c.text) ? `${id} (TAF ${tf.id}, ${tf.distNm} NM)` : id);
+          const out = S.vfrWx(r.data.metars, r.data.taf, eta, { ceilFt: 3000, visSm: 5, nowMs: eta }).map((c) => ({ level: c.level === "warn" ? "warn" : "info", text: pre(c) + ": " + c.text, code: c.code }));
+          if (tf) out.push({ level: "info", text: `${id} has no TAF - using the nearest one, ${tf.id} (${tf.distNm} NM)`, code: "tafNearest" });
+          return out;
+        };
         const depWx = wxOf(dm, depId, t0), destWx = wxOf(am || dm, destId, t1);
         const ck = [], rowId = (i) => (calc.rows[i] ? calc.rows[i].id : null);
         const add = (level, text, leg, code) => ck.push({ level, text, code, leg: leg == null ? null : leg + 1, id: leg == null ? null : rowId(leg) });

@@ -6,10 +6,23 @@ const CACHE = { airport: 86400, metar: 60, taf: 60, airsigmet: 300, cwa: 300, ga
 const num = /^-?\d{1,3}(\.\d+)?$/;
 
 // Validates the query for endpoint ep; returns the upstream URLSearchParams, or null when the request is bad.
+// "lat0,lon0,lat1,lon1" inside the US area, at most maxDeg x maxDeg -> the same string, else null
+function bboxOf(bbox, maxDeg) {
+  const p = String(bbox || '').split(',');
+  if (p.length !== 4 || !p.every(s => num.test(s))) return null;
+  const [la0, lo0, la1, lo1] = p.map(Number);
+  if (la0 < 15 || la1 > 72 || lo0 < -180 || lo1 > -60 || !(la0 < la1) || !(lo0 < lo1) || la1 - la0 > maxDeg || lo1 - lo0 > maxDeg) return null;
+  return p.join(',');
+}
+
 function validate(ep, sp) {
   if (!Object.prototype.hasOwnProperty.call(CACHE, ep)) return null;
   const q = new URLSearchParams();
-  if (ep === 'airport' || ep === 'metar' || ep === 'taf') {
+  if (ep === 'taf' && sp.get('bbox') !== null && sp.get('ids') === null) {
+    const b = bboxOf(sp.get('bbox'), 3);
+    if (!b) return null;
+    q.set('bbox', b);
+  } else if (ep === 'airport' || ep === 'metar' || ep === 'taf') {
     const ids = sp.get('ids') || '', hours = sp.get('hours');
     if (!/^[A-Za-z0-9]{3,4}$/.test(ids)) return null;
     if (hours !== null && (!/^\d{1,2}$/.test(hours) || +hours > 48)) return null;
@@ -20,11 +33,8 @@ function validate(ep, sp) {
     if (!['sierra', 'tango', 'zulu'].includes(type)) return null;
     q.set('type', type);
   } else if (ep === 'pirep') {
-    const bbox = sp.get('bbox') || '', age = sp.get('age');
-    const p = bbox.split(',');
-    if (p.length !== 4 || !p.every(s => num.test(s))) return null;
-    const [la0, lo0, la1, lo1] = p.map(Number);
-    if (la0 < 15 || la1 > 72 || lo0 < -180 || lo1 > -60 || !(la0 < la1) || !(lo0 < lo1) || la1 - la0 > 15 || lo1 - lo0 > 15) return null;
+    const bbox = bboxOf(sp.get('bbox'), 15), age = sp.get('age');
+    if (!bbox) return null;
     if (age !== null && (!/^[1-6]$/.test(age))) return null;
     q.set('bbox', bbox); q.set('age', age === null ? '3' : age);
   }

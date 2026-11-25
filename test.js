@@ -523,6 +523,14 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   tst('aw pirep bad bbox', V('pirep', '') === null && V('pirep', 'bbox=30,-115,36') === null && V('pirep', 'bbox=36,-115,30,-108') === null
     && V('pirep', 'bbox=30,-108,36,-115') === null && V('pirep', 'bbox=10,-115,20,-108') === null && V('pirep', 'bbox=30,-115,36,-50') === null
     && V('pirep', 'bbox=20,-130,40,-110') === null && V('pirep', 'bbox=a,b,c,d') === null);
+  // nearest-TAF fallback: relay accepts a small bbox for taf, data layer picks the nearest within 50 NM
+  tst('aw taf bbox ok', V('taf', 'bbox=32.57,-113.23,34.27,-111.53').toString() === 'bbox=32.57%2C-113.23%2C34.27%2C-111.53&format=json');
+  tst('aw taf bbox too big / bad', V('taf', 'bbox=30,-115,34,-111') === null && V('taf', 'bbox=34,-113,33,-112') === null && V('taf', 'bbox=x') === null);
+  const OD = require('./ofpdata.js'), gyr = { lat: 33.4225, lon: -112.376 };
+  const tafs = [{ icaoId: 'KPHX', lat: 33.42779, lon: -112.00366 }, { icaoId: 'KLUF', lat: 33.538, lon: -112.38 }, { icaoId: 'KXXX', lat: 'x', lon: null }];
+  const nt = OD.nearestTaf(tafs, gyr, 50);
+  tst('nearest TAF to KGYR is KLUF ~7 NM', nt && nt.id === 'KLUF' && nt.distNm === 7, JSON.stringify(nt && { id: nt.id, d: nt.distNm }));
+  tst('nearest TAF none within radius', OD.nearestTaf(tafs, { lat: 36, lon: -112 }, 50) === null && OD.nearestTaf(null, gyr, 50) === null);
 }
 // ==== end tfrxml ====
 // ==== safety tests (OFP) ====
