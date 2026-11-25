@@ -166,4 +166,14 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   const legLm = (i, trip) => 2500 + (lw2.legs[i].fuel - trip) * P.LB_PER_USG;
   eq('leg1 landing mass', legLm(0, 10), 2500 + 30 * P.LB_PER_USG); eq('last leg landing mass = lm', legLm(1, 8), lw2.lm);
 }
+// ==== nav tests (OFP) ====
+// ==== end nav ====
+// ==== cruise tests (OFP) ====
+// ==== end cruise ====
+// ==== ato tests (OFP) ====
+// ==== end ato ====
+// ==== print tests (OFP) ====
+// ==== end print ====
+// ==== safety tests (OFP) ====
+// ==== end safety ====
 console.log(fail ? fail + ' FAILED' : 'ALL PASS'); process.exit(fail ? 1 : 0);
