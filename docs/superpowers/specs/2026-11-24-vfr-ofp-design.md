@@ -148,12 +148,12 @@ Students at LAT US (Cirrus SR20, KGYR) must turn in an Operational Flight Plan (
   - not using an ATO exit or entry point at GYR
   - takeoff fuel > 56 USG usable
   - Pl. Fuel at the destination < Min. Fuel
-  - more than 17 legs (the form's capacity)
+  - more than 18 legs (the form’s capacity)
 
 ### Output
 - **OFP PDF:** pdf-lib draws onto the blank form at measured cell coordinates, the same approach as `drawSheet` (`app.js:416`).
   - The header is filled.
-  - Legs 1–10 go in the left ladder and 11–17 in the right.
+  - Legs 1–11 go in the left ladder (leg 1 is the departure-procedure leg with the pre-printed XXX cells) and 12–18 in the right.
   - Totals are filled.
   - The Notes box gets TAS/FF per altitude and the emergency fields.
   - The in-flight cells are left empty.
@@ -191,7 +191,7 @@ All schema changes are additive (expand only). The existing T/O path (`calculati
 - Terrain zoom level and sampling step (aim for about 0.5 NM).
 - Caching details.
 - Mobile layout specifics.
-- How the 17-leg capacity is split when there are alternates.
+- How the 18-leg capacity is split when there are alternates.
 
 ## Verification
 - `node test.js` with new cases taken from B02's worked examples:
