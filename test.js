@@ -201,16 +201,16 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   tst('nav semicircular alts east', JSON.stringify(Nav.semicircularAlts(90, 4000, 9000)) === '[5500,7500]');
   tst('nav semicircular alts west', JSON.stringify(Nav.semicircularAlts(270, 4000, 9000)) === '[4500,6500,8500]');
   eq('nav glide reach', Nav.glideReachNm(6500, 1600), 4900 / 6076 * 9 * 0.8, 1e-9); eq('nav glide never negative', Nav.glideReachNm(1000, 2000), 0, 0);
-  const GYR = { lat: 33.4231, lon: -112.6760 }, PHX = { lat: 33.4343, lon: -112.0116 };
-  eq('nav dist GYR-PHX', Nav.dist(GYR, PHX), 33.3, 0.3); eq('nav brg GYR-PHX', Nav.brg(GYR, PHX), 88, 1);
+  const GYR = { lat: 33.4225, lon: -112.3760 }, PHX = { lat: 33.4343, lon: -112.0116 };
+  eq('nav dist GYR-PHX', Nav.dist(GYR, PHX), 18.27, 0.1); eq('nav brg GYR-PHX', Nav.brg(GYR, PHX), 87.68, 0.3);
   const vGyr = Nav.variation(GYR, new Date('2026-11-24'));
   tst('nav variation GYR 9.5..11 E', vGyr > 9.5 && vGyr < 11, vGyr);
   const vDen = Nav.variation({ lat: 39.74, lon: -104.99 }, new Date('2026-11-24')), vMia = Nav.variation({ lat: 25.76, lon: -80.19 }, new Date('2026-11-24'));
   tst('nav variation Denver ~ +7.5 E', Math.abs(vDen - 7.5) < 0.6, vDen); tst('nav variation Miami ~ -7.4 (W)', Math.abs(vMia + 7.4) < 0.6, vMia);
   const mcGE = Nav.magCourse(GYR, PHX, new Date('2026-11-24'));
-  eq('nav magCourse = TC - E var', mcGE, 88 - vGyr, 1.5);
-  const mid = Nav.mid(GYR, PHX); eq('nav mid lon', mid.lon, -112.344, 0.01);
-  const off = Nav.offset(GYR, 90, 33.3); eq('nav offset east ~ PHX lon', off.lon, -112.0116, 0.02);
+  eq('nav magCourse = TC - E var', mcGE, 87.68 - vGyr, 1.5);
+  const mid = Nav.mid(GYR, PHX); eq('nav mid lon', mid.lon, -112.194, 0.01);
+  const off = Nav.offset(GYR, 87.68, 18.27); eq('nav offset east ~ PHX lon', off.lon, -112.0116, 0.02);
   eq('nav xtrack on line', Nav.xtrack(mid, GYR, PHX), 0, 0.05); eq('nav xtrack past end', Nav.xtrack({ lat: 33.4343, lon: -111.9 }, GYR, PHX), Nav.dist({ lat: 33.4343, lon: -111.9 }, PHX), 0.01);
   tst('nav fmtEet', Nav.fmtEet(5) === ':05' && Nav.fmtEet(65) === '1:05' && Nav.fmtEet(39) === ':39');
   tst('nav addHHMM', Nav.addHHMM('1006', 5) === '1011' && Nav.addHHMM('2358', 5) === '0003');
@@ -336,7 +336,7 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   eq('remarks T&G', OP.layout({ rows: [mkRow(0, { pattern: { touchGo: 3, taxiBack: 0, fullStop: true, airwork: 20 } })], totals: {} }, hdr).filter((it) => /T&G \(3\)|AIRWORK|Full stop/.test(it.text)).length >= 2 ? 1 : 0, 1, 0);
   // fpl
   const xml = OP.fpl([
-    { name: 'KGYR', ident: 'KGYR', lat: 33.4231, lon: -112.676, type: 'AIRPORT' },
+    { name: 'KGYR', ident: 'KGYR', lat: 33.4225, lon: -112.376, type: 'AIRPORT' },
     { name: 'Sun Valley Rd', ident: '', lat: 33.35, lon: -112.5333, type: 'USER WAYPOINT' },
     { name: 'KE63', ident: 'KE63', lat: 33.3, lon: -112.0, type: 'AIRPORT' },
   ]);
@@ -360,5 +360,145 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
 }
 // ==== end print ====
 // ==== safety tests (OFP) ====
+{
+  const Nav = require('./nav.js'), S = require('./safety.js');
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  // interpWind on model levels (alt ft MSL; temp may be missing on a level)
+  const PH = [{ alt: 3000, dir: 210, spd: 13, temp: null }, { alt: 6000, dir: 230, spd: 25, temp: 17 }, { alt: 9000, dir: 240, spd: 31, temp: 10 }];
+  const w45 = S.interpWind(PH, 4500);
+  eq('interpWind 4500 dir', w45.dir, 220, 3); eq('interpWind 4500 spd', w45.spd, 19, 1); eq('interpWind 4500 temp (lapse below 6000)', w45.temp, 20, 0.5);
+  eq('interpWind exact level', S.interpWind(PH, 6000).spd, 25, 0);
+  eq('interpWind below lowest holds 3000', S.interpWind(PH, 1500).spd, 13, 0);
+  eq('interpWind 350/010 averages to north', Math.abs(Nav.angDiff(S.interpWind([{ alt: 3000, dir: 350, spd: 20 }, { alt: 6000, dir: 10, spd: 20 }], 4500).dir, 0)), 0, 1);
+  tst('interpWind of nothing is null', S.interpWind({}, 5000) === null && S.interpWind(null, 5000) === null && S.interpWind([], 5000) === null);
+
+  // altitude profile
+  const pr = S.legProfile([{ dist: 30, alt: 5500, prevAlt: 2700 }, { dist: 30, alt: 1600, prevAlt: 6500, last: true }, { dist: 5, alt: 9500, prevAlt: 2700 }]);
+  eq('climb leg: TOC at', pr[0][0].distTo, Nav.tocNm(2700, 5500), 0.01); eq('climb leg: level after TOC', pr[0][1].altFrom, 5500, 0);
+  eq('last leg: descent starts at TOD', pr[1][1].distFrom, 30 - Nav.todNm(6500, 1600), 0.01); eq('last leg: descent ends at TPA', pr[1][1].altTo, 1600, 0);
+  tst('short leg: climb does not finish, altitude interpolated', pr[2][0].distTo === 5 && pr[2][0].altTo < 9500 && pr[2][0].altTo > 2700);
+  eq('altAt mid-climb', S.altAt(pr[0], Nav.tocNm(2700, 5500) / 2), 4100, 1);
+
+  // airspace: a Class B shelf 3000-9000 ft over a square
+  const A0 = { lat: 33.00, lon: -112.00 }, B0 = { lat: 33.00, lon: -111.50 };      // about 25 NM east
+  const sq = [[32.9, -111.9], [32.9, -111.6], [33.1, -111.6], [33.1, -111.9]];
+  const shelf = { name: 'TEST CLASS B', cls: 'B', lowerFt: 3000, upperFt: 9000, lowerRef: 'MSL', rings: [sq] };
+  const lenAB = Nav.dist(A0, B0);
+  const low = S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 2500, prevAlt: 2500, last: false }])[0], [shelf]);
+  tst('2500 ft under the shelf', low.length === 1 && low[0].kind === 'under-shelf' && low[0].cls === 'B', JSON.stringify(low));
+  const mid = S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 5500, prevAlt: 5500, last: false }])[0], [shelf]);
+  tst('5500 ft inside the shelf', mid.length === 1 && mid[0].kind === 'inside' && mid[0].fromNm > 5 && mid[0].toNm < 20, JSON.stringify(mid));
+  const high = S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 9500, prevAlt: 9500, last: false }])[0], [shelf]);
+  eq('9500 ft over the shelf: no conflict', high.length, 0, 0);
+  const sfcD = { name: 'TEST D', cls: 'D', lowerFt: 0, upperFt: 3000, lowerRef: 'SFC', rings: [sq] };
+  eq('class D at 2500 ft: inside', S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 2500, prevAlt: 2500, last: false }])[0], [sfcD])[0].kind === 'inside' ? 1 : 0, 1, 0);
+  const aglMoa = { name: 'TEST MOA', cls: 'MOA', lowerFt: 500, upperFt: 6500, lowerRef: 'SFC', rings: [sq] };
+  eq('MOA with 500 AGL floor, flying 4000 with ground 3000', S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 4000, prevAlt: 4000, last: false }])[0], [aglMoa], { groundFt: 3000 }).length, 1, 0);
+  eq('MOA with 500 AGL floor, flying 2000 with ground 3000: below floor', S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 2000, prevAlt: 2000, last: false }])[0], [aglMoa], { groundFt: 3000 }).length, 0, 0);
+  eq('no airspace data gives no conflicts', S.airspaceConflicts(A0, B0, [], []).length + S.airspaceConflicts(A0, B0, [], null).length, 0, 0);
+  // ADDS attribute semantics, from live features (Class_Airspace PHX Class B Area B; SUA A-231; class E5; class A)
+  const fB = S.fromAddsAirspace({ attributes: { NAME: 'PHOENIX CLASS B', CLASS: 'B', LOCAL_TYPE: 'CLASS_B', UPPER_VAL: 9000, UPPER_UOM: 'FT', UPPER_CODE: 'MSL', LOWER_VAL: 3000, LOWER_UOM: 'FT', LOWER_CODE: 'MSL' }, geometry: { rings: [[[-112.1, 33.4], [-112.0, 33.4], [-112.0, 33.5]]] } }, 'class');
+  tst('ADDS class B floor/ceiling', fB && fB.cls === 'B' && fB.lowerFt === 3000 && fB.upperFt === 9000 && fB.lowerRef === 'MSL' && fB.rings[0][0][0] === 33.4 && fB.rings[0][0][1] === -112.1);
+  const fS = S.fromAddsAirspace({ attributes: { NAME: 'A-231', TYPE_CODE: 'A', UPPER_VAL: '6500', UPPER_UOM: 'FT', UPPER_CODE: 'MSL', LOWER_VAL: '500', LOWER_UOM: 'FT', LOWER_CODE: 'SFC' }, geometry: { rings: [[[-112.1, 33.4], [-112.0, 33.4], [-112.0, 33.5]]] } }, 'sua');
+  tst('ADDS SUA alert area, string values, 500 AGL', fS && fS.cls === 'ALERT' && fS.lowerFt === 500 && fS.lowerRef === 'SFC' && fS.upperFt === 6500);
+  eq('ADDS surface floor', S.fromAddsAirspace({ attributes: { NAME: 'PHOENIX MODE C', LOCAL_TYPE: 'MODE C', CLASS: null, UPPER_VAL: 10000, UPPER_UOM: 'FT', UPPER_CODE: 'MSL', LOWER_VAL: 0, LOWER_UOM: 'FT', LOWER_CODE: 'SFC' }, geometry: { rings: [[[-112, 33], [-111, 33], [-111, 34]]] } }, 'class').cls === 'MODEC' ? 1 : 0, 1, 0);
+  eq('ADDS FL600 ceiling', S.addsAlt(600, 'FL', 'STD'), 60000, 0); eq('ADDS -9998 is unlimited', S.addsAlt(-9998, null, null), S.UNLIMITED, 0);
+  tst('ADDS feature without geometry is skipped', S.fromAddsAirspace({ attributes: { NAME: 'X', CLASS: 'B' } }, 'class') === null);
+
+  // glide reach
+  const g0 = S.glide(A0, B0, 5500, []);
+  tst('glide with no fields: one gap over the whole leg', g0.fields.length === 0 && g0.gaps.length === 1 && g0.gaps[0].fromNm === 0 && Math.abs(g0.gaps[0].toNm - lenAB) < 0.2, JSON.stringify(g0));
+  const apt = { ident: 'KTST', lat: 33.0, lon: -111.75, elev: 1000 };    // mid-leg; reach at 5500 ft = 4500/6076*9*0.8 = 5.3 NM
+  const g1 = S.glide(A0, B0, 5500, [apt]);
+  tst('glide with one field: field listed and gaps either side', g1.fields.length === 1 && g1.fields[0].ident === 'KTST' && Math.abs(g1.fields[0].distNm - lenAB / 2) < 1.1 && g1.gaps.length === 2, JSON.stringify(g1));
+  eq('glide high enough covers the leg', S.glide(A0, B0, 12500, [apt]).gaps.length, 0, 0);
+  eq('glide with null fields', S.glide(A0, B0, 5500, null).gaps.length, 1, 0);
+
+  // terrain / obstacles
+  const t = S.tileOf(33.4343, -112.0116, 11);
+  const back = S.tilePixelLatLon(11, t.x, t.y, t.px, t.py);
+  eq('tile round-trip lat', back.lat, 33.4343, 1e-6); eq('tile round-trip lon', back.lon, -112.0116, 1e-6);
+  eq('Terrarium 0 m', S.terrainFt(128, 0, 0), 0, 1e-6); eq('Terrarium 1000 m in ft', S.terrainFt(131, 232, 0), 1000 * 3.28084, 0.01);
+  const ptsC = S.corridorPoints(A0, B0, 5, 0.5, 1);
+  tst('corridor points all within 5 NM of the leg', ptsC.length > 100 && ptsC.every((p) => Nav.xtrack(p, A0, B0) <= 5 + 1e-6));
+  const tile = new Uint8ClampedArray(256 * 256 * 4); for (let i = 0; i < 256 * 256; i++) { tile[i * 4] = 128; tile[i * 4 + 1] = 100; tile[i * 4 + 3] = 255; } // 100 m everywhere
+  const pk = S.tileOf(33.0, -111.75, 11); const pi = (Math.min(255, Math.floor(pk.py)) * 256 + Math.min(255, Math.floor(pk.px))) * 4; tile[pi + 1] = 200; // 200 m peak
+  const mt = S.maxTerrain([{ lat: 33.0, lon: -111.75 }], 11, () => tile);
+  eq('maxTerrain finds the peak', mt.ft, 200 * 3.28084, 1); eq('maxTerrain lat near the peak', mt.lat, 33.0, 0.003);
+  const mm = S.maxTerrain([{ lat: 33, lon: -111.75 }], 11, () => null);
+  tst('maxTerrain with a missing tile is null ft, not 0', mm && mm.ft === null && mm.missing === 1);
+  eq('maxTerrain with no points', S.maxTerrain([], 11, () => tile) === null ? 1 : 0, 1, 0);
+  const me = S.maxElevation({ ft: 4512, lat: 33, lon: -111.8 }, [{ lat: 33.02, lon: -111.7, amsl: 5100 }, { lat: 34.5, lon: -111.7, amsl: 9000 }], A0, B0, 5);
+  tst('maxElevation: obstacle near the leg wins, far one ignored', me.kind === 'obstacle' && me.ft === 5100 && me.msa === 6500, JSON.stringify(me));
+  eq('maxElevation terrain only: 4512 -> MSA 6000', S.maxElevation({ ft: 4512, lat: 1, lon: 1 }, [], A0, B0).msa, 6000, 0);
+  eq('maxElevation with no data is null', S.maxElevation(null, [], A0, B0) === null && S.maxElevation({ ft: null }, null, A0, B0) === null ? 1 : 0, 1, 0);
+
+  // checks
+  const LATA = require('./airports.js');
+  const mkRow = (o) => Object.assign({ name: 'WP', ident: '', dist: 10, mc: 90, alt: 3500, msa: 3000, plFuel: 40, minFuel: 10, fixed: null }, o);
+  const codes = (cs) => cs.map((c) => c.code + (c.leg === null ? '' : '@' + c.leg));
+  let cs = S.checks({ log: { rows: [mkRow({ dist: 35 })] } });
+  tst('35 NM leg gives leg30', codes(cs).includes('leg30@0'), codes(cs).join());
+  cs = S.checks({ log: { rows: [mkRow({ mc: 270, alt: 5500 })] } });
+  tst('5500 ft westbound gives semicircular', codes(cs).includes('semicircular@0'), codes(cs).join());
+  tst('5500 ft eastbound is fine', !codes(S.checks({ log: { rows: [mkRow({ mc: 90, alt: 5500 })] } })).includes('semicircular@0'));
+  tst('wrap: MC 358 is westbound (even): 5500 warns, 6500 fine', codes(S.checks({ log: { rows: [mkRow({ mc: 358, alt: 5500 })] } })).includes('semicircular@0') && !codes(S.checks({ log: { rows: [mkRow({ mc: 358, alt: 6500 })] } })).includes('semicircular@0'));
+  tst('wrap: MC 002 is eastbound (odd): 5500 fine, 6500 warns', !codes(S.checks({ log: { rows: [mkRow({ mc: 2, alt: 5500 })] } })).includes('semicircular@0') && codes(S.checks({ log: { rows: [mkRow({ mc: 2, alt: 6500 })] } })).includes('semicircular@0'));
+  tst('low altitude is exempt (3500 AGL rule)', !codes(S.checks({ log: { rows: [mkRow({ mc: 270, alt: 3500 })] }, rows: [mkRow({ groundFt: 1000 })] })).includes('semicircular@0'));
+  tst('below MSA', codes(S.checks({ log: { rows: [mkRow({ alt: 3500, msa: 6000 })] } })).includes('belowMsa@0'));
+  cs = S.checks({ log: { rows: [mkRow({})] }, sources: { terrain: { ok: false }, airspace: { ok: true } } });
+  tst('terrain unavailable gives dataMissing and only that source', codes(cs).filter((c) => c === 'dataMissing').length === 1 && /Terrain/.test(cs.find((c) => c.code === 'dataMissing').text), codes(cs).join());
+  tst('wind error row gives windErr', codes(S.checks({ log: { rows: [mkRow({ error: 'wind', gs: null, eet: null })] } })).includes('windErr@0'));
+  tst('18+ legs gives legs18, 18 does not', codes(S.checks({ log: { rows: Array.from({ length: 19 }, () => mkRow({})) } })).includes('legs18') && !codes(S.checks({ log: { rows: Array.from({ length: 18 }, () => mkRow({})) } })).includes('legs18'));
+  tst('fuel over 56 and under reserve', (() => { const c = codes(S.checks({ log: { rows: [mkRow({ plFuel: 5, minFuel: 10 })] }, takeoffFuel: 57 })); return c.includes('fuelUsable') && c.includes('fuelReserve@0'); })());
+  tst('airspace conflict becomes warn, shelf becomes info', (() => {
+    const c = S.checks({ log: { rows: [mkRow({})] }, conflicts: [[{ name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 3000, upperFt: 9000, lowerRef: 'MSL', fromNm: 2, toNm: 6, kind: 'inside' }, { name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 7000, upperFt: 9000, lowerRef: 'MSL', fromNm: 6, toNm: 8, kind: 'under-shelf' }]] });
+    return c.filter((x) => x.code === 'airspace').map((x) => x.level).join() === 'warn,info';
+  })());
+  tst('glide gap becomes glideGap', codes(S.checks({ log: { rows: [mkRow({})] }, glide: [{ fields: [], gaps: [{ fromNm: 1, toNm: 4 }] }] })).includes('glideGap@0'));
+  cs = S.checks({ log: { rows: [mkRow({})] }, airports: LATA, solo: true, night: true, dep: 'KGYR', dest: 'E63' });
+  tst('KE63 not approved for night VFR', codes(cs).includes('aptNight') && cs.find((c) => c.code === 'aptNight').text.includes('E63'), codes(cs).join());
+  tst('KGYR departure without ATO procedure', codes(cs).includes('noAtoProc@0'));
+  cs = S.checks({ log: { rows: [mkRow({ fixed: { min: 4, nm: 7 } })] }, airports: LATA, solo: true, night: false, dep: 'KGYR', dest: 'KGEU' });
+  tst('KGYR departure with ATO procedure is fine', !codes(cs).includes('noAtoProc@0'));
+  tst('SOW limits are listed as info', codes(S.checks({ log: { rows: [mkRow({})] }, airports: LATA, dest: 'KSOW', dep: 'KGEU', solo: false })).includes('aptLimits'));
+  eq('checks with nothing', S.checks({}).length + S.checks().length, 0, 0);
+
+  // recommender
+  const leg = { a: A0, b: B0, mc: 90, dist: lenAB };
+  const env = { msa: 6000, airspaces: [shelf], winds: () => ({ dir: 90, spd: 20 }), cruise: (alt) => ({ tas: 140 + alt / 1000, ff: 12.7 }), minFt: 3000, maxFt: 12500 };
+  const ra = S.recommendAlts(leg, env);
+  tst('recommender: no altitude below MSA is ok', ra.filter((r) => r.alt < 6000).every((r) => !r.ok) && ra.some((r) => r.alt < 6000));
+  tst('recommender: shelf altitudes rejected, 9500 is the first ok, all semicircular', ra.filter((r) => r.alt < 9000).every((r) => !r.ok) && ra.find((r) => r.ok).alt === 9500 && ra.every((r) => Nav.semicircularOk(90, r.alt, 0)), JSON.stringify(ra.map((r) => r.alt + ':' + r.ok)));
+  const rec = ra.filter((r) => r.rec);
+  tst('recommender: exactly one rec, lowest ok', rec.length === 1 && rec[0].alt === ra.find((r) => r.ok).alt && rec[0].gs > 100 && rec[0].fuel > 0, JSON.stringify(ra.slice(0, 3)));
+  tst('recommender with no data does not throw', S.recommendAlts({ mc: 90, dist: 10 }, {}).every((r) => !r.ok) && Array.isArray(S.recommendAlts(null, null)));
+  tst('recommender: wind too strong is not ok', S.recommendAlts({ mc: 90, dist: 10 }, { cruise: () => ({ tas: 100, ff: 10 }), winds: () => ({ dir: 0, spd: 150 }) }).every((r) => !r.ok));
+}
+// OfpData against a network that is down: every call resolves {ok:false}, never throws, never zero. Child process
+// because test.js exits synchronously.
+{
+  const out = require('child_process').execFileSync(process.execPath, ['-e', `
+    global.fetch = () => Promise.reject(new Error('offline'));
+    const D = require('./ofpdata.js'); const bb = { s: 33.2, w: -112.8, n: 33.7, e: -111.9 };
+    Promise.all([D.airspace(bb), D.airports(bb), D.navaids(bb), D.obstacles(bb), D.terrainMax({ lat: 33.4, lon: -112.7 }, { lat: 33.4, lon: -112.0 }), D.windsAloft({ lat: 33.4, lon: -112, timeMs: Date.now(), altFt: 6000 }), D.airspace(null)])
+      .then((r) => console.log(JSON.stringify(r.map((x) => [x.ok, x.at, x.data === null || (Array.isArray(x.data) && x.data.length === 0)]))));
+  `], { cwd: __dirname }).toString().trim();
+  const r = JSON.parse(out);
+  const allDown = r.length === 7 && r.every((x) => x[0] === false && x[1] === null && x[2] === true);
+  console.log((allDown ? 'ok   ' : 'FAIL ') + 'OfpData offline: all sources ok:false with empty data ' + out); if (!allDown) fail++;
+  const D = require('./ofpdata.js');
+  const u = D._urls.addsUrl('Class_Airspace', { s: 33.2, w: -112.8, n: 33.7, e: -111.9 }, '1=1', 'NAME', 'poly');
+  console.log((/Class_Airspace\/FeatureServer\/0\/query\?/.test(u) && /geometry=-112\.8%2C33\.2%2C-111\.9%2C33\.7/.test(u) && /inSR=4326/.test(u) && /maxAllowableOffset/.test(u) ? 'ok   ' : 'FAIL ') + 'OfpData ADDS query url'); if (!/maxAllowableOffset/.test(u)) fail++;
+  // Open-Meteo pressure levels -> wind (levels at 2.5k/5k/10k/14k ft ~ 762/1500/3050/4270 m)
+  const mk = (gh, d, s, tc) => ({ gh, d, s, tc });
+  const L = { 925: mk(762, 200, 10, 20), 850: mk(1500, 220, 20, 14), 700: mk(3050, 250, 40, 0), 600: mk(4270, 260, 50, -10) };
+  const hourly = { time: [1000, 4600] };
+  [1000, 925, 850, 800, 700, 600, 500].forEach((l) => { const o = L[l]; hourly['wind_speed_' + l + 'hPa'] = o ? [o.s, o.s] : [null, null]; hourly['wind_direction_' + l + 'hPa'] = o ? [o.d, o.d] : [null, null]; hourly['temperature_' + l + 'hPa'] = o ? [o.tc, o.tc] : [null, null]; hourly['geopotential_height_' + l + 'hPa'] = o ? [o.gh, o.gh] : [null, null]; });
+  const ow = D._omWind({ hourly }, 1000 * 1000, 1500 * 3.28084);
+  eq('Open-Meteo wind at a level', ow.spd, 20, 0); eq('Open-Meteo wind dir', ow.dir, 220, 0); eq('Open-Meteo temp', ow.tempC, 14, 0.2);
+  eq('Open-Meteo wind between levels', D._omWind({ hourly }, 1000 * 1000, 2275 * 3.28084).spd, 30, 1.2);
+  eq('Open-Meteo empty response is null', D._omWind({}, 0, 5000) === null && D._omWind(null, 0, 5000) === null ? 1 : 0, 1, 0);
+}
 // ==== end safety ====
 console.log(fail ? fail + ' FAILED' : 'ALL PASS'); process.exit(fail ? 1 : 0);

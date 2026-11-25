@@ -31,7 +31,7 @@ Students at LAT US (Cirrus SR20, KGYR) must turn in an Operational Flight Plan (
 | Airports, navaids, fixes | ADDS `US_Airport`, `NAVAIDSystem`, `DesignatedPoints`, `Frequencies` |
 | Obstacles | ADDS `Digital_Obstacle_File` (fields `Lat_DD`, `Long_DD`, `AGL`, `AMSL`, `Type_Code`) |
 | Terrain | AWS Terrarium tiles `elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png` (CORS `*`) |
-| Winds and temperature aloft | **Primary:** FAA winds-aloft forecast (FB), what ForeFlight and instructors use. aviationweather.gov `/api/data/windtemp` through the existing relay `api/aw/[ep].js`. Its endpoint allow-list and parameter checks need extending for `windtemp` (region, level=low, fcst 06/12/24). Use the nearest FB station (e.g. PHX, PRC, BLH) at the bracketing levels (3000/6000/9000/12000), interpolated to the leg altitude. **Fallback:** Open-Meteo pressure levels (`OM` in `autofill.js:40`). Both are true and get converted to magnetic. |
+| Winds and temperature aloft | Open-Meteo pressure levels (GFS/HRRR), interpolated to the leg altitude; true, converted to magnetic. (The FAA FB winds-aloft text product was retired with the NAM model, SCN26-47, so it is not used.) |
 | Magnetic variation | Vendored WMM2025 model (`vendor/wmm.js`, small, MIT): variation at any point and date |
 
 ## Design
