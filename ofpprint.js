@@ -414,7 +414,10 @@
     if (pos(o.tas)) tokens.push(Math.round(o.tas) + "kts");
     if (pos(o.ff)) tokens.push(String(Number(o.ff.toFixed(1))) + "gph");
     if (pos(o.alt)) tokens.push(Math.round(o.alt) + "ft");
-    // No tail number: ForeFlight treats a tail without a matching aircraft profile on the device as a waypoint ("Unable to find N848EF")
+    // Aircraft: ForeFlight only knows the ID of an aircraft profile on the device (the ATO profiles use the callsign, e.g. VAR848);
+    // anything else is read as a waypoint ("Unable to find N848EF"), so the caller passes the OFP callsign, not the registration.
+    const acft = alnum(o.aircraft);
+    if (acft) tokens.push(acft);
     if (o.etd instanceof Date && !isNaN(o.etd.getTime())) {
       const e = o.etd, p2 = (n) => String(n).padStart(2, "0");
       tokens.push(e.getUTCFullYear() + p2(e.getUTCMonth() + 1) + p2(e.getUTCDate()) + "T" + p2(e.getUTCHours()) + ":" + p2(e.getUTCMinutes()) + ":" + p2(e.getUTCSeconds()) + "Z");
