@@ -167,6 +167,89 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   eq('leg1 landing mass', legLm(0, 10), 2500 + 30 * P.LB_PER_USG); eq('last leg landing mass = lm', legLm(1, 8), lw2.lm);
 }
 // ==== nav tests (OFP) ====
+{
+  const Nav = require('./nav.js');
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  eq('nav eet 8nm/147', Nav.eet(8, 147), 4, 0);
+  eq('nav 4min leg fuel @12.9', Math.round(4 / 60 * 12.9 * 10) / 10, 0.9, 1e-9);
+  const c1 = Nav.climbAdd(2700, 5500), c2 = Nav.climbAdd(5500, 6500), c3 = Nav.climbAdd(6500, 5500);
+  eq('nav climb 2700-5500 min', c1.min, 2, 0); eq('nav climb 2700-5500 gal', c1.gal, 0.8, 1e-9);
+  eq('nav climb 5500-6500 min', c2.min, 1, 0); eq('nav climb 5500-6500 gal', c2.gal, 0.3, 1e-9);
+  eq('nav descent adds nothing', c3.min + c3.gal, 0, 0);
+  eq('nav pattern 3 T&G + full stop min', Nav.pattern({ touchGo: 3, fullStop: true }).min, 25, 0);
+  eq('nav pattern fuel 25 min @12.7', Math.round(25 / 60 * 12.7 * 10) / 10, 5.3, 1e-9);
+  eq('nav taxi-back gal', Nav.pattern({ taxiBack: 1 }).gal, 0.5, 0);
+  eq('nav pattern full stop only', Nav.pattern({ fullStop: true }).min, 10, 0);
+  eq('nav pattern airwork only', Nav.pattern({ airwork: 30 }).min, 30, 0);
+  eq('nav msa 4512', Nav.msa(4512), 6000, 0); eq('nav msa 4500', Nav.msa(4500), 5500, 0);
+  eq('nav tod 6500->1600', Nav.todNm(6500, 1600), 19.7, 0.05);
+  eq('nav toc 2700->6500', Nav.tocNm(3700, 6500), 6500 > 0 ? (2800 / 500) * 105 / 60 : 0, 1e-9);
+  // wind triangle (B02 example winds; the E6B figures in B02 are rounded by hand, see computeOfp comment)
+  eq('nav wca mc309 wind 240/10', Nav.windTriangle({ mc: 309, tas: 151, wdir: 240, wspd: 10 }).wca, -4, 0);
+  eq('nav wca mc124 wind 250/10', Nav.windTriangle({ mc: 124, tas: 150, wdir: 250, wspd: 10 }).wca, 3, 0);
+  const wrap = Nav.windTriangle({ mc: 358, tas: 150, wdir: 2, wspd: 20 });
+  eq('nav wrap gs 358/002', wrap.gs, 130, 0); eq('nav wrap wca small', Math.abs(wrap.wca), 1, 0); eq('nav wrap hdg', wrap.hdg, 359, 0);
+  const wrap2 = Nav.windTriangle({ mc: 350, tas: 150, wdir: 10, wspd: 20 });
+  tst('nav wrap 350 vs wind 010 = 20 deg angle', wrap2.gs === 131 && wrap2.wca === 3, JSON.stringify(wrap2));
+  eq('nav angDiff wrap', Nav.angDiff(2, 358), 4, 0); eq('nav angDiff wrap neg', Nav.angDiff(358, 2), -4, 0);
+  tst('nav wind too strong -> error', Nav.windTriangle({ mc: 90, tas: 100, wdir: 0, wspd: 120 }).error === 'wind');
+  tst('nav headwind > tas -> error', Nav.windTriangle({ mc: 90, tas: 100, wdir: 90, wspd: 120 }).error === 'wind');
+  tst('nav semicircular east 5500', Nav.semicircularOk(90, 5500, 1000) === true);
+  tst('nav semicircular west 5500 bad', Nav.semicircularOk(270, 5500, 1000) === false);
+  tst('nav semicircular 359 @6500', Nav.semicircularOk(359, 6500, 1000) === true);
+  tst('nav semicircular below 3000 AGL', Nav.semicircularOk(270, 3500, 1000) === true);
+  tst('nav semicircular alts east', JSON.stringify(Nav.semicircularAlts(90, 4000, 9000)) === '[5500,7500]');
+  tst('nav semicircular alts west', JSON.stringify(Nav.semicircularAlts(270, 4000, 9000)) === '[4500,6500,8500]');
+  eq('nav glide reach', Nav.glideReachNm(6500, 1600), 4900 / 6076 * 9 * 0.8, 1e-9); eq('nav glide never negative', Nav.glideReachNm(1000, 2000), 0, 0);
+  const GYR = { lat: 33.4231, lon: -112.6760 }, PHX = { lat: 33.4343, lon: -112.0116 };
+  eq('nav dist GYR-PHX', Nav.dist(GYR, PHX), 33.3, 0.3); eq('nav brg GYR-PHX', Nav.brg(GYR, PHX), 88, 1);
+  const vGyr = Nav.variation(GYR, new Date('2026-11-24'));
+  tst('nav variation GYR 9.5..11 E', vGyr > 9.5 && vGyr < 11, vGyr);
+  const vDen = Nav.variation({ lat: 39.74, lon: -104.99 }, new Date('2026-11-24')), vMia = Nav.variation({ lat: 25.76, lon: -80.19 }, new Date('2026-11-24'));
+  tst('nav variation Denver ~ +7.5 E', Math.abs(vDen - 7.5) < 0.6, vDen); tst('nav variation Miami ~ -7.4 (W)', Math.abs(vMia + 7.4) < 0.6, vMia);
+  const mcGE = Nav.magCourse(GYR, PHX, new Date('2026-11-24'));
+  eq('nav magCourse = TC - E var', mcGE, 88 - vGyr, 1.5);
+  const mid = Nav.mid(GYR, PHX); eq('nav mid lon', mid.lon, -112.344, 0.01);
+  const off = Nav.offset(GYR, 90, 33.3); eq('nav offset east ~ PHX lon', off.lon, -112.0116, 0.02);
+  eq('nav xtrack on line', Nav.xtrack(mid, GYR, PHX), 0, 0.05); eq('nav xtrack past end', Nav.xtrack({ lat: 33.4343, lon: -111.9 }, GYR, PHX), Nav.dist({ lat: 33.4343, lon: -111.9 }, PHX), 0.01);
+  tst('nav fmtEet', Nav.fmtEet(5) === ':05' && Nav.fmtEet(65) === '1:05' && Nav.fmtEet(39) === ':39');
+  tst('nav addHHMM', Nav.addHHMM('1006', 5) === '1011' && Nav.addHHMM('2358', 5) === '0003');
+
+  // B02 worked example (SEP-26 p85): KGYR -> E63, T/O 1006, 54.5 USG, FF 12.7. Per-row winds/FF chosen so the
+  // wind triangle reproduces the printed GS and WCA (B02's E6B figures differ slightly from pure maths at 250/10).
+  const ofp = Nav.computeOfp({ toTime: '1006', takeoffFuel: 54.5, reserveMin: 30, cruiseFf: 12.7, rows: [
+    { name: 'PIR', alt: 2700, msa: 6000, mc: null, dist: 5, tas: 146, ff: 12.9, fixed: { min: 5, nm: 5 } },
+    { name: 'Gila Crossing', alt: 2700, msa: 6000, mc: 121, dist: 10, wdir: 250, wspd: 8, tas: 146, ff: 12.9, prevAlt: 2700 },
+    { name: 'North Test Track', alt: 5500, msa: 5500, mc: 124, dist: 18, wdir: 240, wspd: 8, tas: 150, ff: 12.8, prevAlt: 2700 },
+    { name: 'Motown', alt: 6500, msa: 4000, mc: 235, dist: 19, wdir: 240, wspd: 10, tas: 151, ff: 12.7, prevAlt: 5500, pattern: { airwork: 30 } },
+    { name: 'Tire Farm', alt: 6500, msa: 4500, mc: 309, dist: 8, wdir: 240, wspd: 10, tas: 151, ff: 12.9, prevAlt: 6500 },
+    { name: 'E63', alt: 1600, msa: 4500, mc: 245, dist: 16, wdir: 250, wspd: 10, tas: 151, ff: 12.7, prevAlt: 6500, pattern: { touchGo: 3, fullStop: true } }
+  ] });
+  const want = [ // eet, gs, wca, legFuel, plFuel, minFuel
+    [5, null, null, 1.1, 53.4, 25.6], [4, 151, 2, 0.9, 52.5, 24.7], [9, 153, 3, 2.3, 50.2, 22.4],
+    [39, 141, 0, 8.3, 41.9, 14.1], [4, 147, -4, 0.9, 41.0, 13.2], [32, 141, 0, 6.8, 34.2, 6.4]];
+  ofp.rows.forEach((r, i) => {
+    const w = want[i], n = 'B02 row ' + (i + 1) + ' ' + r.name + ' ';
+    eq(n + 'EET', r.eet, w[0], 0); if (w[1] !== null) { eq(n + 'GS', r.gs, w[1], 0); eq(n + 'WCA', r.wca, w[2], 0); }
+    eq(n + 'leg fuel', r.legFuel, w[3], 1e-9); eq(n + 'Pl fuel', r.plFuel, w[4], 1e-9); eq(n + 'Min fuel', r.minFuel, w[5], 1e-9);
+  });
+  eq('B02 trip fuel', ofp.totals.trip, 20.3, 1e-9); eq('B02 total EET', ofp.totals.eet, 93, 0); eq('B02 reserve', ofp.reserveGal, 6.4, 1e-9);
+  eq('B02 PTO last', Number(ofp.rows[5].pto), 1139, 0);
+  tst('B02 how string', /^8 NM \/ 147 kt = 3\.3 min/.test(ofp.rows[4].how.eet), ofp.rows[4].how.eet);
+  // header wind 250/10 for every leg stays within 3 kt / 1 deg of B02's hand-E6B figures
+  [[121, 146, 151, 2], [124, 150, 153, 3], [235, 151, 141, 0], [309, 151, 147, -4], [245, 151, 141, 0]].forEach(([mc, tas, gs, wca]) => {
+    const t = Nav.windTriangle({ mc, tas, wdir: 250, wspd: 10 });
+    tst('B02 header wind 250/10 close on MC ' + mc, Math.abs(t.gs - gs) <= 5 && Math.abs(t.wca - wca) <= 1, JSON.stringify(t));
+  });
+  // wind too strong: error row, no NaN anywhere
+  const bad = Nav.computeOfp({ toTime: '1006', takeoffFuel: 50, reserveMin: 30, cruiseFf: 12.7, rows: [
+    { name: 'A', alt: 5500, mc: 90, dist: 10, wdir: 0, wspd: 120, tas: 100, ff: 12.7 }, { name: 'B', alt: 5500, mc: 90, dist: 10, wdir: 90, wspd: 0, tas: 100, ff: 12.7 }] });
+  tst('computeOfp wind error flagged, no NaN', bad.rows[0].error === 'wind' && !/NaN/.test(JSON.stringify(bad)) && bad.totals.incomplete === true, JSON.stringify(bad.totals));
+  tst('computeOfp empty rows', Nav.computeOfp({ toTime: '1006', takeoffFuel: 50, reserveMin: 30, cruiseFf: 12.7, rows: [] }).rows.length === 0);
+  // wrap through north in a full row
+  const wr = Nav.computeOfp({ toTime: '1006', takeoffFuel: 50, reserveMin: 30, cruiseFf: 12.7, rows: [{ name: 'A', alt: 5500, mc: 358, dist: 13, wdir: 2, wspd: 20, tas: 150, ff: 12.7 }] });
+  eq('computeOfp wrap GS', wr.rows[0].gs, 130, 0);
+}
 // ==== end nav ====
 // ==== cruise tests (OFP) ====
 {
