@@ -211,6 +211,12 @@ function computeOfp(input) {
       extraGal = p.min / 60 * cruiseFf + p.gal;
       o.extra = { min: p.min, gal: round1(extraGal) };
     }
+    // Optional fixed extra minutes (ATO rule, e.g. Power Plant DEP into KGEU +10): charged at cruise FF, no remark.
+    if (isNum(r.extraMin) && r.extraMin > 0) {
+      extraGal += r.extraMin / 60 * cruiseFf;
+      o.extra = { min: o.extra.min + r.extraMin, gal: round1(extraGal) };
+      how.extra = (r.extraHow || 'Extra') + ': +' + r.extraMin + ' min at ' + cruiseFf + ' GPH';
+    }
     const totalMin = cruiseMin + o.climb.min + o.extra.min;
     o.eet = totalMin;
     const cruiseFuel = round1(cruiseMin / 60 * ff);

@@ -249,6 +249,10 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   // wrap through north in a full row
   const wr = Nav.computeOfp({ toTime: '1006', takeoffFuel: 50, reserveMin: 30, cruiseFf: 12.7, rows: [{ name: 'A', alt: 5500, mc: 358, dist: 13, wdir: 2, wspd: 20, tas: 150, ff: 12.7 }] });
   eq('computeOfp wrap GS', wr.rows[0].gs, 130, 0);
+  const xm = Nav.computeOfp({ toTime: '1000', takeoffFuel: 40, reserveMin: 30, cruiseFf: 12.0, rows: [{ name: 'A', alt: 3500, mc: 90, dist: 12, wdir: 90, wspd: 0, tas: 150, ff: 12.0, prevAlt: 3500 }, { name: 'KGEU', alt: 2000, mc: 90, dist: 12, wdir: 90, wspd: 0, tas: 150, ff: 12.0, prevAlt: 3500, extraMin: 10, extraHow: 'Power Plant DEP into KGEU' }] });
+  eq('computeOfp extraMin adds minutes', xm.rows[1].eet - xm.rows[0].eet, 10, 0);
+  eq('computeOfp extraMin fuel at cruise FF', Math.round((xm.rows[1].legFuel - xm.rows[0].legFuel) * 10) / 10, 2.0, 1e-9);
+  tst('computeOfp extraMin how and no pattern', /Power Plant DEP into KGEU/.test(xm.rows[1].how.extra) && !xm.rows[1].pattern);
 }
 // ==== end nav ====
 // ==== cruise tests (OFP) ====

@@ -131,6 +131,11 @@ table.legs input.wnd{width:58px}
 .popbtns{display:flex;flex-direction:column;gap:4px;min-width:140px}
 .popbtns b{font-size:13px}
 .popbtns button{padding:4px 8px;font-size:12px;color:#111;background:#fff}
+#autochecks .srow{font-size:12px;margin:2px 0}#autochecks .grp{font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.65;margin-top:6px}
+.prepLbl{position:absolute;left:0;top:0;white-space:nowrap;background:#fffe;color:#111;border:1px solid #0005;border-radius:3px;font:700 11px/14px -apple-system,Segoe UI,Arial,sans-serif;padding:0 3px;pointer-events:none}
+.prepTk{color:#111;font:700 10px/10px -apple-system,Segoe UI,Arial,sans-serif;text-shadow:0 0 3px #fff,0 0 3px #fff;margin:-5px 0 0 -5px;pointer-events:none}
+.prepMk{position:absolute;white-space:nowrap;transform:translate(-50%,-50%);background:#ffd400;color:#111;border:1px solid #000;border-radius:3px;font:700 10px/12px -apple-system,Segoe UI,Arial,sans-serif;padding:0 3px;pointer-events:none}
+.hiMk{position:absolute;white-space:nowrap;transform:translate(-50%,-50%);background:#fff;color:#b8321f;border:1px solid #b8321f;border-radius:3px;font:700 11px/14px -apple-system,Segoe UI,Arial,sans-serif;padding:0 3px}
 /* dialogs, how, toast */
 dialog{max-width:min(620px,calc(100vw - 24px));width:100%;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);padding:16px}
 dialog::backdrop{background:#0006}
@@ -216,6 +221,7 @@ dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #
           <label>Takeoff fuel (USG)<input type="number" min="0" max="60" step="0.1" data-k="takeoffFuel" data-t="num"></label>
           <label>Power (%)<input type="number" min="50" max="100" step="1" data-k="pwr" data-t="num"></label>
           <label>ISA dev (°C)<input type="number" min="-30" max="30" step="1" data-k="isaDev" data-t="num"></label>
+          <label>ISA source<select data-k="isaAuto" data-t="bool"><option value="0">Manual</option><option value="1">Auto (forecast)</option></select></label>
           <label>Wind<select data-k="windMode"><option value="single">One MAG W/V</option><option value="leg">Per leg</option><option value="auto">Auto (forecast)</option></select></label>
           <label class="wcol1">MAG wind from<input type="number" min="0" max="360" step="1" data-k="wind.dir" data-t="num" placeholder="270"></label>
           <label class="wcol1">Wind speed (kt)<input type="number" min="0" max="99" step="1" data-k="wind.spd" data-t="num" placeholder="10"></label>
@@ -282,9 +288,10 @@ dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #
 <script src="vendor/wmm.js"></script>
 <script src="nav.js"></script>
 <script src="ato.js"></script>
+<script src="safety.js"></script>
+<script src="ofpdata.js"></script>
 <script src="ofpform.js"></script>
 <script src="ofpprint.js"></script>
-<!-- step 3 (OfpData / Safety) loads here, before ofp.js: <script src="ofpdata.js"></script><script src="safety.js"></script> -->
 <script src="ofp.js"></script>
 </body>
 </html>
