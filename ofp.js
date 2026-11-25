@@ -213,7 +213,7 @@
       $$("#mapctl [data-base]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.base === baseMode)));
     }
     tiles.tac.on("tileerror", () => {
-      if (baseMode !== "auto" || tacBad) return;
+      if (baseMode !== "auto" || tacBad || curBase !== "tac" || map.getZoom() < 10) return;
       if (++tacErr >= 4) { tacBad = map.getCenter(); applyBase(); toast("No TAC tiles here, showing the sectional"); }
     });
     map.on("zoomend", () => { tacErr = 0; applyBase(); map.getContainer().classList.toggle("zlow", map.getZoom() < 9); });
@@ -465,11 +465,15 @@
       tasLines.forEach((t) => { if (cur && (cur + "   " + t).length > 54) { lines.push(cur); cur = t; } else cur = cur ? cur + "   " + t : t; });
       if (cur) lines.push(cur);
       const note = String(state.notes || "").trim();
-      const w = state.wind, single = state.windMode === "single" && isNum(w.dir) && isNum(w.spd);
+      // B02 "Cruise MAG W/V": the magnetic wind at the altitude flown over the most distance (dir to 10 deg, speed to whole kt)
+      const byAlt = {}; rows.forEach((r) => { if (!r.fixed) byAlt[r.alt] = (byAlt[r.alt] || 0) + r.dist; });
+      const cruiseAlt = Object.keys(byAlt).sort((x, y) => byAlt[y] - byAlt[x])[0];
+      const cr = cruiseAlt == null ? null : rows.filter((r) => !r.fixed && r.alt === +cruiseAlt && r.hasWind).sort((x, y) => y.dist - x.dist)[0];
+      const magWindStr = cr ? `${String(Math.round(cr.wdir / 10) * 10 % 360 || 360).padStart(3, "0")}/${String(Math.round(cr.wspd)).padStart(2, "0")}` : "";
       const onBlock = hhmm(state.offBlock) && isNum(state.blockMin) ? Nav.addHHMM(hhmm(state.offBlock), state.blockMin) : "";
       return {
         from: icaoOf(state.dep) || state.dep, to: icaoOf(state.dest) || state.dest, offBlock: hhmm(state.offBlock), onBlock, toTime: hhmm(state.toTime),
-        callsign: state.callsign, reg: state.reg, cruiseFf, magWind: single ? `${String(Math.round(w.dir)).padStart(3, "0")}/${String(Math.round(w.spd)).padStart(2, "0")}` : "",
+        callsign: state.callsign, reg: state.reg, cruiseFf, magWind: magWindStr, magWindAlt: cr ? cr.alt : null,
         alt: alts.length > 2 ? alts[0] + "-" + alts[alts.length - 1] : alts.join("/"), date: fmtDate(state.date), mission: state.mission, crew: state.crew.slice(),
         takeoffFuel: isNum(state.takeoffFuel) ? state.takeoffFuel : "", notes: [...lines, ...(note ? [note] : []), ...ctx.notes],
       };
@@ -627,6 +631,8 @@
       const m = state.windMode, el = byId("windnote"), ws = ctx.sources.winds;
       $$(".wcol1").forEach((l) => (l.style.display = m === "leg" ? "none" : ""));
       el.textContent = m === "auto" ? (ws && ws.ok === false ? "Automatic winds unavailable: the plan uses the MAG W/V above (enter a wind)." : "Automatic winds: Open-Meteo forecast at each leg's midpoint and altitude, true wind converted to magnetic. The MAG W/V above is the fallback.") : m === "leg" ? "Type a magnetic wind (270/10) in each leg's Wind cell. Legs without one use calm wind." : "One magnetic wind (from, kt) is used for every leg.";
+      const hw = calc.header && calc.header.magWind;
+      if (hw) el.textContent += ` Cruise MAG W/V on the OFP: ${hw} at ${calc.header.magWindAlt} ft.`;
       if (state.isaAuto) el.textContent += " ISA deviation comes from the forecast temperature at each leg's altitude (manual value as fallback).";
     }
     function renderFinal() {
@@ -1162,9 +1168,10 @@
       const aptOk = ctx.sources.airports && ctx.sources.airports.ok !== false;
       const fields = aptOk ? candidateFields() : [];
       const conflicts = {}, glide = {}, notes = [];
+      const termApts = [state.dep, state.dest].filter((v, k, arr) => arr.indexOf(v) === k).map((code) => { const ap = aptOf(code), c = aptCoord(code); return ap && c ? { ident: ap.icao, name: String(ap.name).split(/[,\/]/)[0].trim(), lat: c.lat, lon: c.lon } : null; }).filter(Boolean);
       rows.forEach((r, i) => {
         const a = route[i], b = route[i + 1];
-        conflicts[r.id] = ctx.data.airspace.length ? S.airspaceConflicts(a, b, prof[i], airNear(a, b), { groundFt: 0 }) : [];
+        conflicts[r.id] = ctx.data.airspace.length ? S.airspaceConflicts(a, b, prof[i], airNear(a, b), { groundFt: 0, airports: termApts }) : [];
         if (aptOk && fields.length) {
           const g = S.glide(a, b, (nm) => S.altAt(prof[i], nm), fields, 1);
           glide[r.id] = Object.assign(g, { prof: prof[i] });

@@ -460,6 +460,27 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
     return c.filter((x) => x.code === 'airspace').map((x) => x.level).join() === 'warn,info';
   })());
   tst('glide gap becomes glideGap', codes(S.checks({ log: { rows: [mkRow({})] }, glide: [{ fields: [], gaps: [{ fromNm: 1, toNm: 4 }] }] })).includes('glideGap@0'));
+  // noise reduction: Mode C once, surface areas as info, one line per leg and class, small glide gaps as info
+  const inB = (a, b, f, t2, lo) => ({ name: 'PHOENIX CLASS B', cls: 'B', lowerFt: lo, upperFt: 9000, lowerRef: lo === 0 ? 'SFC' : 'MSL', fromNm: f, toNm: t2, kind: 'inside' });
+  const modec = { name: 'PHOENIX SKY HARBOR INTERNATIONAL MODE C', cls: 'MODEC', lowerFt: 0, upperFt: 10000, lowerRef: 'SFC', fromNm: 0, toNm: 9, kind: 'inside' };
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, conflicts: [[modec], [modec]] });
+  tst('Mode C veil: one info line, no warnings', cs.filter((c) => c.code === 'modeC').length === 1 && cs.filter((c) => c.level === 'warn').length === 0 && cs.filter((c) => c.code === 'airspace').length === 0, codes(cs).join());
+  const gyrD = { name: 'PHOENIX-GOODYEAR MUNICIPAL AIRPORT CLASS D', cls: 'D', lowerFt: 0, upperFt: 3000, lowerRef: 'SFC', fromNm: 0, toNm: 3, kind: 'inside', ap: 'KGYR' };
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, airports: LATA, dep: 'KGYR', dest: 'KGEU', conflicts: [[gyrD], []] });
+  tst('departure surface area is one info', cs.filter((c) => c.code === 'terminal').length === 1 && cs.find((c) => c.code === 'terminal').level === 'info' && !codes(cs).includes('airspace@0') && /Departure in KGYR Class D/.test(cs.find((c) => c.code === 'terminal').text), JSON.stringify(cs.filter((c) => c.code === 'terminal')));
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, airports: LATA, dep: 'KGEU', dest: 'KGYR', conflicts: [[], [gyrD]] });
+  tst('arrival surface area is one info', cs.filter((c) => c.code === 'terminal').length === 1 && /Arrival in KGYR/.test(cs.find((c) => c.code === 'terminal').text));
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, airports: LATA, dep: 'KGEU', dest: 'KGEU', conflicts: [[], [gyrD]] });
+  tst('surface area of another airport mid-route still warns', cs.some((c) => c.code === 'airspace' && c.level === 'warn'));
+  const tagged = S.airspaceConflicts({ lat: 33, lon: -112.0 }, { lat: 33, lon: -112.1 }, S.legProfile([{ dist: Nav.dist({ lat: 33, lon: -112.0 }, { lat: 33, lon: -112.1 }), alt: 2000, prevAlt: 2000, last: false }])[0],
+    [{ name: 'SOME CLASS D', cls: 'D', lowerFt: 0, upperFt: 3000, lowerRef: 'SFC', rings: [[[32.9, -112.2], [33.1, -112.2], [33.1, -111.9], [32.9, -111.9]]] }], { airports: [{ ident: 'KXYZ', lat: 33.0, lon: -112.05 }] });
+  tst('airspaceConflicts tags a conflict whose polygon holds the airport', tagged.length === 1 && tagged[0].ap === 'KXYZ');
+  cs = S.checks({ log: { rows: [mkRow({})] }, conflicts: [[inB(0, 0, 7.2, 14, 4000), inB(0, 0, 14.4, 19, 3000), inB(0, 0, 19.4, 31.3, 0),
+    { name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 7000, upperFt: 9000, lowerRef: 'MSL', fromNm: 0, toNm: 4, kind: 'under-shelf' }, { name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 6000, upperFt: 9000, lowerRef: 'MSL', fromNm: 4.2, toNm: 7, kind: 'under-shelf' }]] });
+  const asx = cs.filter((c) => c.code === 'airspace');
+  tst('one warn per leg and class with merged floors, one shelf info', asx.length === 2 && asx[0].level === 'warn' && /7\.2-31\.3 NM \(floors 4000\/3000\/SFC\)/.test(asx[0].text) && asx[1].level === 'info' && /lowest floor 6000/.test(asx[1].text), JSON.stringify(asx));
+  tst('glide gap under 3 NM is info, 3 NM or more is warn', S.checks({ log: { rows: [mkRow({})] }, glide: [{ fields: [], gaps: [{ fromNm: 1, toNm: 3.5 }] }] }).find((c) => c.code === 'glideGap').level === 'info'
+    && S.checks({ log: { rows: [mkRow({})] }, glide: [{ fields: [], gaps: [{ fromNm: 1, toNm: 4 }] }] }).find((c) => c.code === 'glideGap').level === 'warn');
   cs = S.checks({ log: { rows: [mkRow({})] }, airports: LATA, solo: true, night: true, dep: 'KGYR', dest: 'E63' });
   tst('KE63 not approved for night VFR', codes(cs).includes('aptNight') && cs.find((c) => c.code === 'aptNight').text.includes('E63'), codes(cs).join());
   tst('KGYR departure without ATO procedure', codes(cs).includes('noAtoProc@0'));

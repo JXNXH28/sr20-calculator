@@ -118,6 +118,18 @@ function airspaceConflicts(a, b, profile, airspaces, opts) {
     pts.push({ nm, lat: p.lat, lon: p.lon, alt: altAt(profile, nm) });
   }
   const out = [];
+  // opts.airports: [{ident, name, lat, lon}] (departure/destination). A conflict gets `ap` = the ident of an airport whose name
+  // is in the airspace name, whose ident is a word in it, or whose position is inside one of its rings.
+  const aps = (opts && opts.airports) || [];
+  const tagApt = (as) => {
+    const nm = String(as.name || '').toUpperCase();
+    for (const a of aps) {
+      if (a.name && nm.includes(String(a.name).toUpperCase())) return a.ident;
+      if (a.ident && new RegExp('\\bK?' + String(a.ident).replace(/^K(?=[A-Z0-9]{3}$)/, '').toUpperCase() + '\\b').test(nm)) return a.ident;
+      if (isNum(a.lat) && isNum(a.lon) && as.rings.some((r) => pointInPolygon(a.lat, a.lon, r))) return a.ident;
+    }
+    return null;
+  };
   (airspaces || []).forEach((as) => {
     if (!as || !as.rings || !CONFLICT_CLASSES[as.cls]) return;
     const floor = as.lowerRef === 'SFC' ? (as.lowerFt > 0 ? as.lowerFt + ground : 0) : (as.lowerFt || 0);
@@ -131,7 +143,7 @@ function airspaceConflicts(a, b, profile, airspaces, opts) {
     runs.forEach((r) => {
       const inAlt = r.filter((p) => isNum(p.alt) && p.alt >= floor && p.alt <= ceil);
       if (inAlt.length) {
-        out.push({ name: as.name, cls: as.cls, lowerFt: as.lowerFt, upperFt: as.upperFt, lowerRef: as.lowerRef, fromNm: round1(inAlt[0].nm), toNm: round1(inAlt[inAlt.length - 1].nm), kind: 'inside' });
+        out.push({ name: as.name, cls: as.cls, lowerFt: as.lowerFt, upperFt: as.upperFt, lowerRef: as.lowerRef, fromNm: round1(inAlt[0].nm), toNm: round1(inAlt[inAlt.length - 1].nm), kind: 'inside', ap: tagApt(as) });
       } else if ((as.cls === 'B' || as.cls === 'C') && floor > 0 && r.every((p) => isNum(p.alt) && p.alt < floor)) {
         out.push({ name: as.name, cls: as.cls, lowerFt: as.lowerFt, upperFt: as.upperFt, lowerRef: as.lowerRef, fromNm: round1(r[0].nm), toNm: round1(r[r.length - 1].nm), kind: 'under-shelf' });
       }
@@ -279,6 +291,8 @@ function checks(ctx) {
   const add = (level, leg, code, text) => out.push({ level, leg, code, text });
   const nm = (r, i) => (r && (r.name || r.ident)) || 'point ' + (i + 1);
   const leg = (i) => 'Leg ' + (i + 1) + ' to ' + nm(rows[i] || L[i], i);
+  let modeC = null;
+  const sameApt = (x, y) => { const f = (v) => String(v || '').toUpperCase().replace(/^K(?=[A-Z0-9]{3}$)/, ''); return !!x && !!y && f(x) === f(y); };
   L.forEach((r, i) => {
     const ur = rows[i] || r, fixed = !!(r.fixed || ur.fixed);
     if (!fixed && isNum(r.dist) && r.dist > 30) add('warn', i, 'leg30', leg(i) + ' is ' + round1(r.dist) + ' NM. Legs over 30 NM need a checkpoint in between.');
@@ -287,18 +301,37 @@ function checks(ctx) {
       if (!Nav.semicircularOk(r.mc, r.alt, g)) add('warn', i, 'semicircular', leg(i) + ': ' + r.alt + ' ft on MC ' + String(Math.round(r.mc)).padStart(3, '0') + ' breaks the semicircular rule (' + (Nav.norm360(r.mc) < 180 ? 'odd thousands +500 eastbound' : 'even thousands +500 westbound') + ').');
     }
     if (!fixed && isNum(r.msa) && isNum(r.alt) && r.alt < r.msa) add('warn', i, 'belowMsa', leg(i) + ': ' + r.alt + ' ft is below the MSA of ' + r.msa + ' ft. Verify on the chart.');
+    // airspace: Mode C veil once per flight, surface areas of the departure/arrival airport as info, one line per leg and class
+    const flr = (k) => (k.lowerRef === 'SFC' ? (k.lowerFt > 0 ? k.lowerFt + ' ft AGL' : 'SFC') : (k.lowerFt === 0 ? 'SFC' : String(k.lowerFt)));
+    const uniq = (arr) => arr.filter((v, j, a2) => a2.indexOf(v) === j);
+    const groups = {}, shelves = [];
     ((c.conflicts && c.conflicts[i]) || []).forEach((k) => {
-      const span = k.fromNm === k.toNm ? 'at ' + k.fromNm + ' NM' : 'from ' + k.fromNm + ' to ' + k.toNm + ' NM';
-      const flr = k.lowerRef === 'SFC' && k.lowerFt > 0 ? k.lowerFt + ' ft AGL' : (k.lowerFt === 0 ? 'surface' : k.lowerFt + ' ft');
-      const desc = k.name + ' (' + (k.cls === 'MODEC' ? 'Mode C veil' : k.cls) + ', ' + flr + ' to ' + (k.upperFt >= UNLIMITED ? 'unlimited' : k.upperFt + ' ft') + ')';
-      if (k.kind === 'inside') add('warn', i, 'airspace', leg(i) + ' enters ' + desc + ' ' + span + '. Verify on the chart.');
-      else add('info', i, 'airspace', leg(i) + ' passes under ' + desc + ' ' + span + '. Stay below ' + k.lowerFt + ' ft.');
+      if (k.cls === 'MODEC') { if (!modeC) modeC = String(k.name || '').replace(/\s*MODE C\s*$/i, '').trim() || 'this'; return; }
+      if (k.kind === 'inside') {
+        const isDep = i === 0 && k.ap && sameApt(k.ap, c.dep), isArr = i === L.length - 1 && k.ap && sameApt(k.ap, c.dest);
+        if ((k.cls === 'B' || k.cls === 'C' || k.cls === 'D') && !(k.lowerFt > 0) && (isDep || isArr)) {
+          const ap = (c.airports && c.airports.find && c.airports.find(k.ap)) ? c.airports.find(k.ap).icao : k.ap;
+          [isDep ? 'Departure' : null, isArr ? 'Arrival' : null].filter(Boolean).forEach((w) => add('info', i, 'terminal', w + ' in ' + ap + ' Class ' + k.cls + ' - contact tower.'));
+          return;
+        }
+        (groups[k.cls] = groups[k.cls] || []).push(k);
+      } else shelves.push(k);
     });
+    Object.keys(groups).forEach((cls) => {
+      const g = groups[cls], from = Math.min(...g.map((k) => k.fromNm)), to = Math.max(...g.map((k) => k.toNm));
+      const span = from === to ? 'at ' + from + ' NM' : from + '-' + to + ' NM';
+      add('warn', i, 'airspace', leg(i) + ' enters ' + uniq(g.map((k) => k.name)).slice(0, 2).join(' / ') + ' ' + span + ' (floors ' + uniq(g.map(flr)).join('/') + '). Verify on the chart.');
+    });
+    if (shelves.length) {
+      const low = Math.min(...shelves.map((k) => k.lowerFt)), from = Math.min(...shelves.map((k) => k.fromNm)), to = Math.max(...shelves.map((k) => k.toNm));
+      add('info', i, 'airspace', leg(i) + ' passes under ' + uniq(shelves.map((k) => k.name)).slice(0, 2).join(' / ') + ' (lowest floor ' + low + ' ft) ' + (from === to ? 'at ' + from : from + '-' + to) + ' NM. Stay below ' + low + ' ft.');
+    }
     const gl = c.glide && c.glide[i];
-    if (gl && gl.gaps && gl.gaps.length) add('warn', i, 'glideGap', leg(i) + ': no airport within glide reach ' + gl.gaps.map((g) => g.fromNm === g.toNm ? 'at ' + g.fromNm : g.fromNm + '-' + g.toNm).join(', ') + ' NM (9:1, 80% factor, no wind).');
+    if (gl && gl.gaps && gl.gaps.length) add(gl.gaps.every((g) => g.toNm - g.fromNm < 3) ? 'info' : 'warn', i, 'glideGap', leg(i) + ': no airport within glide reach ' + gl.gaps.map((g) => g.fromNm === g.toNm ? 'at ' + g.fromNm : g.fromNm + '-' + g.toNm).join(', ') + ' NM (9:1, 80% factor, no wind).');
     if (r.error === 'wind') add('warn', i, 'windErr', leg(i) + ': the wind is too strong for the TAS on this course. Enter a different wind or altitude.');
     if (isNum(r.plFuel) && isNum(r.minFuel) && r.plFuel < r.minFuel - 1e-9) add('warn', i, 'fuelReserve', leg(i) + ': planned fuel ' + r.plFuel.toFixed(1) + ' is below the minimum ' + r.minFuel.toFixed(1) + ' USG.');
   });
+  if (modeC) add('info', null, 'modeC', 'Route is inside the ' + modeC + ' Mode C veil — transponder with altitude reporting required.');
   // airports
   const LAT = c.airports;
   const seen = new Set();
