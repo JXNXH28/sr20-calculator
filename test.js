@@ -767,6 +767,14 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   tst('vfrWx ETA outside TAF', wOut.some((x) => x.level === 'info' && x.code === 'tafOutside'), JSON.stringify(wOut));
   tst('vfrWx custom thresholds', S.vfrWx([metar({ clouds: [{ cover: 'BKN', base: 3500 }] })], null, eta, { ceilFt: 4000 }).some((x) => x.code === 'ceiling'));
 
+  // TEMPO / PROB groups covering the ETA
+  const tempoTaf = (fc) => { const t = taf({}); t.fcsts.push(Object.assign({ timeFrom: eta / 1000 - 3600, timeTo: eta / 1000 + 3600, fcstChange: 'TEMPO', wdir: null, wspd: null, wgst: null, visib: null, wxString: null, clouds: [] }, fc)); return t; };
+  const wTempo = S.vfrWx([metar()], tempoTaf({ wxString: 'TSRA' }), eta);
+  tst('vfrWx TEMPO thunderstorm', wTempo.some((x) => x.level === 'warn' && x.code === 'thunderstorm' && /TAF TEMPO \d\d\u2013\d\dZ/.test(x.text)), JSON.stringify(wTempo));
+  tst('vfrWx TEMPO ceiling', S.vfrWx([metar()], tempoTaf({ clouds: [{ cover: 'BKN', base: 1500 }] }), eta).some((x) => x.code === 'ceiling' && /TEMPO/.test(x.text)));
+  tst('vfrWx TEMPO not covering ETA ignored', S.vfrWx([metar()], tempoTaf({ wxString: 'TSRA', timeFrom: eta / 1000 + 3600, timeTo: eta / 1000 + 7200 }), eta).filter((x) => x.level === 'warn').length === 0);
+  tst('vfrWx PROB30 visibility', S.vfrWx([metar()], tempoTaf({ fcstChange: 'PROB', probability: 30, visib: 2 }), eta).some((x) => x.code === 'visibility' && /PROB30/.test(x.text)));
+
   // labels
   tst('hazardLabel airmet', S.hazardLabel({ ...air, to: T0 + 6 * 3600e3 }) === 'AIRMET TANGO TURB 080\u2013FL180 15\u201321Z', S.hazardLabel({ ...air, to: T0 + 6 * 3600e3 }));
   tst('hazardLabel tfr', S.hazardLabel(tfr) === 'TFR 6/1234 SFC\u201317999 ft', S.hazardLabel(tfr));

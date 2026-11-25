@@ -221,8 +221,183 @@ async function windsAloft(q) {
   return result(null, false, 'winds aloft');
 }
 
-const OfpData = { airspace, airports, navaids, obstacles, terrainMax, windsAloft, decoder: canvasDecode,
+// Like jget, but an empty answer (204 / empty body: no reports) is an empty list
+async function jlist(u, ms) {
+  const c = new AbortController(), t = setTimeout(() => c.abort(), ms || 12000);
+  try {
+    const r = await fetch(u, { signal: c.signal });
+    if (!r.ok) throw new Error(u.split('?')[0] + ' HTTP ' + r.status);
+    const txt = r.status === 204 ? '' : (await r.text()).trim();
+    return txt ? JSON.parse(txt) : [];
+  } finally { clearTimeout(t); }
+}
+/* ---------- weather hazards, PIREPs, TFRs, METAR/TAF (relays, in-memory cache 5 min) ---------- */
+const WX_TTL = 5 * 60000, wxMem = new Map();
+async function wxCached(key, force, load) {
+  const hit = wxMem.get(key);
+  if (!force && hit && Date.now() - hit.t < WX_TTL) return hit.v;
+  const v = await load();
+  if (v && v.ok) wxMem.set(key, { t: Date.now(), v });
+  return v;
+}
+const fnum = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : null; };
+const ring = (coords) => (coords || []).map((c) => [fnum(c.lat), fnum(c.lon)]).filter((p) => p[0] !== null && p[1] !== null);
+// "120" (hundreds of ft) -> 12000, 'SFC' -> 0, anything else -> null
+const hund = (v, fzl) => {
+  if (v === null || v === undefined || v === '') return null;
+  if (/^SFC$/i.test(String(v))) return 0;
+  if (/^FZL$/i.test(String(v))) return fzl !== undefined && fnum(fzl) !== null ? fnum(fzl) * 100 : null;
+  const n = fnum(v); return n === null ? null : n * 100;
+};
+const isoMs = (s) => { if (!s) return null; const t = Date.parse(/(Z|[+-]\d\d:?\d\d)$/.test(s) ? s : s + 'Z'); return isFinite(t) ? t : null; };
+function ringBox(r) {
+  let s = 90, n = -90, w = 180, e = -180;
+  r.forEach((p) => { s = Math.min(s, p[0]); n = Math.max(n, p[0]); w = Math.min(w, p[1]); e = Math.max(e, p[1]); });
+  return { s, n, w, e };
+}
+const boxHit = (a, b) => a.n >= b.s && a.s <= b.n && a.e >= b.w && a.w <= b.e;
+function expandBbox(b, nm) {
+  const dl = nm / 60, dn = nm / 60 / Math.max(0.2, Math.cos((b.s + b.n) / 2 * Math.PI / 180));
+  return { s: b.s - dl, n: b.n + dl, w: b.w - dn, e: b.e + dn };
+}
+function itemBox(it) {
+  const boxes = [];
+  (it.polys || []).forEach((r) => { if (r.length) boxes.push(ringBox(r)); });
+  (it.snapshots || []).forEach((sn) => (sn.polys || []).forEach((r) => { if (r.length) boxes.push(ringBox(r)); }));
+  (it.circles || []).forEach((c) => { boxes.push(expandBbox({ s: c.lat, n: c.lat, w: c.lon, e: c.lon }, c.radiusNm)); });
+  return boxes;
+}
+function normAirSigmet(a) {
+  if (!a || !Array.isArray(a.coords)) return null;
+  const type = String(a.airSigmetType || '').toUpperCase(), hz = String(a.hazard || '').toUpperCase();
+  const kind = type === 'AIRMET' ? 'AIRMET' : hz === 'CONVECTIVE' ? 'CSIGMET' : 'SIGMET';
+  const r = ring(a.coords); if (r.length < 3) return null;
+  return { id: [kind, a.seriesId || '', a.validTimeFrom || ''].join('-'), kind, hazard: hz || type, sev: a.severity === undefined || a.severity === null ? null : a.severity,
+    from: fnum(a.validTimeFrom) !== null ? a.validTimeFrom * 1000 : null, to: fnum(a.validTimeTo) !== null ? a.validTimeTo * 1000 : null,
+    baseFt: fnum(a.altitudeLow1), topFt: fnum(a.altitudeHi1), polys: [r], circles: [], raw: a.rawAirSigmet || '' };
+}
+function normCwa(a) {
+  if (!a || !Array.isArray(a.coords)) return null;
+  const r = ring(a.coords); if (r.length < 3) return null;
+  return { id: 'CWA-' + (a.cwsu || '') + '-' + (a.validTimeFrom || ''), kind: 'CWA', hazard: String(a.hazard || '').toUpperCase() + (a.qualifier ? ' ' + a.qualifier : ''), sev: null,
+    from: fnum(a.validTimeFrom) !== null ? a.validTimeFrom * 1000 : null, to: fnum(a.validTimeTo) !== null ? a.validTimeTo * 1000 : null,
+    baseFt: fnum(a.base), topFt: fnum(a.top), polys: [r], circles: [], raw: a.rawText || '' };
+}
+// Series by hazard (the product the relay returns can differ from the type asked for)
+const GSERIES = (hz, type) => (/^(IFR|MT_OBSC)$/.test(hz) ? 'SIERRA' : /^(TURB|SFC_WND|LLWS)/.test(hz) ? 'TANGO' : /^(ICE|FZLVL)/.test(hz) ? 'ZULU' : String(type || '').toUpperCase());
+// G-AIRMET snapshots (one per forecast hour) of the same hazard+tag are merged into one item with `snapshots`.
+function normGairmet(list, type) {
+  const groups = new Map();
+  (list || []).forEach((g) => {
+    if (!g || g.geometryType !== 'AREA' || /^(FZLVL|M_FZLVL)$/.test(String(g.hazard))) return;
+    const r = ring(g.coords), vm = isoMs(g.validTime); if (r.length < 3 || vm === null) return;
+    const k = g.hazard + '|' + (g.tag || '');
+    let it = groups.get(k);
+    if (!it) {
+      const hz = String(g.hazard).replace('MT_OBSC', 'MTN OBSCN');
+      it = { id: 'G-' + k, kind: 'AIRMET', hazard: hz, sev: GSERIES(g.hazard, type), from: null, to: null, baseFt: null, topFt: null, polys: [], circles: [], snapshots: [], raw: '' };
+      groups.set(k, it);
+    }
+    const baseFt = hund(g.base, g.fzlbase), topFt = hund(g.top, g.fzltop);
+    let sn = it.snapshots.find((x) => x.validMs === vm);
+    if (!sn) { sn = { validMs: vm, polys: [], baseFt, topFt }; it.snapshots.push(sn); }
+    sn.polys.push(r);
+  });
+  const out = [];
+  groups.forEach((it) => {
+    it.snapshots.sort((a, b) => a.validMs - b.validMs);
+    it.from = it.snapshots[0].validMs - 90 * 60000; it.to = it.snapshots[it.snapshots.length - 1].validMs + 90 * 60000;
+    it.baseFt = it.snapshots[0].baseFt; it.topFt = it.snapshots[0].topFt;
+    it.raw = 'G-AIRMET ' + it.sev + ' ' + it.hazard;
+    out.push(it);
+  });
+  return out;
+}
+// bbox {s,w,n,e} -> {data:[Safety hazard items], ok, source, at, partial}; ok when at least one product answered
+async function hazards(bbox, force) {
+  const src = 'aviationweather.gov';
+  if (!validBbox(bbox)) return result([], false, src);
+  const eb = expandBbox(bbox, 50), key = 'hz:' + [bbox.s, bbox.w, bbox.n, bbox.e].map((v) => v.toFixed(1)).join(',');
+  return wxCached(key, force, async () => {
+    const jobs = [
+      jlist('/api/aw/airsigmet').then((l) => (l || []).map(normAirSigmet)),
+      jlist('/api/aw/cwa').then((l) => (l || []).map(normCwa)),
+      ...['sierra', 'tango', 'zulu'].map((t) => jlist('/api/aw/gairmet?type=' + t).then((l) => normGairmet(l, t))),
+    ];
+    const rs = await Promise.allSettled(jobs);
+    const okN = rs.filter((r) => r.status === 'fulfilled').length;
+    if (!okN) return result([], false, src);
+    const items = [], ids = new Set();
+    rs.forEach((r) => { if (r.status === 'fulfilled') r.value.forEach((it) => { if (it && !ids.has(it.id) && itemBox(it).some((b) => boxHit(b, eb))) { ids.add(it.id); items.push(it); } }); });
+    return result(items, true, src, Date.now(), { partial: okN < rs.length });
+  });
+}
+// PIREPs near the route: bbox widened by 25 NM, split into requests of at most 15 degrees
+async function pireps(bbox, force) {
+  const src = 'aviationweather.gov';
+  if (!validBbox(bbox)) return result([], false, src);
+  const b = expandBbox(bbox, 25);
+  const s = Math.max(15, b.s), n = Math.min(72, b.n), w = Math.max(-180, b.w), e = Math.min(-60, b.e);
+  if (!(s < n) || !(w < e)) return result([], true, src);
+  const key = 'pr:' + [s, w, n, e].map((v) => v.toFixed(1)).join(',');
+  return wxCached(key, force, async () => {
+    const cells = [], ns = Math.ceil((n - s) / 14.9), nw = Math.ceil((e - w) / 14.9);
+    for (let i = 0; i < ns; i++) for (let j = 0; j < nw; j++) {
+      const la0 = s + (n - s) * i / ns, la1 = s + (n - s) * (i + 1) / ns, lo0 = w + (e - w) * j / nw, lo1 = w + (e - w) * (j + 1) / nw;
+      cells.push([la0, lo0, la1, lo1].map((v) => v.toFixed(2)).join(','));
+    }
+    const rs = await Promise.allSettled(cells.map((c) => jlist('/api/aw/pirep?bbox=' + c + '&age=3')));
+    const okN = rs.filter((r) => r.status === 'fulfilled').length;
+    if (!okN) return result([], false, src);
+    const seen = new Set(), out = [];
+    rs.forEach((r) => { if (r.status === 'fulfilled') (r.value || []).forEach((p) => { const k = p.obsTime + '|' + p.rawOb; if (!seen.has(k)) { seen.add(k); out.push(p); } }); });
+    return result(out, true, src, Date.now(), { partial: okN < rs.length });
+  });
+}
+// Rough state boxes [s, n, w, e], enough to decide which states' TFRs to ask for
+const STATE_BOX = { AZ: [31.3, 37.0, -114.8, -109.0], CA: [32.5, 42.0, -124.5, -114.1], NV: [35.0, 42.0, -120.0, -114.0], UT: [37.0, 42.0, -114.05, -109.0],
+  NM: [31.3, 37.0, -109.05, -103.0], CO: [37.0, 41.0, -109.05, -102.0], TX: [25.8, 36.5, -106.7, -93.5] };
+function statesFor(bbox) {
+  if (!validBbox(bbox)) return [];
+  const b = expandBbox(bbox, 25);
+  return Object.keys(STATE_BOX).filter((k) => { const x = STATE_BOX[k]; return boxHit({ s: x[0], n: x[1], w: x[2], e: x[3] }, b); });
+}
+function tfrItems(items) {
+  const out = [];
+  (items || []).forEach((t) => (t.shapes || []).forEach((sh, k) => {
+    const polys = sh.kind === 'poly' ? [(sh.pts || []).map((p) => [p[0], p[1]])] : [];
+    const circles = sh.kind === 'circle' ? [{ lat: sh.lat, lon: sh.lon, radiusNm: sh.radiusNm }] : [];
+    if (!polys.length && !circles.length) return;
+    out.push({ id: t.id, kind: 'TFR', hazard: t.type || 'TFR', sev: null, name: t.name || '', state: t.state || '', from: isoMs(t.from), to: isoMs(t.to),
+      baseFt: fnum(sh.floorFt) !== null ? sh.floorFt : fnum(t.floorFt), topFt: fnum(sh.ceilFt) !== null ? sh.ceilFt : fnum(t.ceilFt),
+      agl: !!(sh.floorAgl || sh.ceilAgl), polys, circles, raw: t.text || t.name || '', shape: k });
+  }));
+  return out;
+}
+async function tfrs(states, force) {
+  const src = 'tfr.faa.gov';
+  const st = (states || []).filter((s) => /^[A-Z]{2}$/.test(s)).slice(0, 6);
+  if (!st.length) return result([], true, src);
+  return wxCached('tfr:' + st.join(','), force, async () => {
+    try {
+      const j = await jget('/api/tfr?states=' + st.join(','), 25000);
+      return result(tfrItems(j && j.items), true, src, Date.now(), { partial: !!(j && j.skipped) });
+    } catch (e) { return result([], false, src); }
+  });
+}
+async function metarTaf(icao, force) {
+  const src = 'aviationweather.gov', id = String(icao || '').toUpperCase();
+  if (!/^[A-Z0-9]{3,4}$/.test(id)) return result({ metars: [], taf: null }, false, src);
+  return wxCached('mt:' + id, force, async () => {
+    const [m, t] = await Promise.allSettled([jlist('/api/aw/metar?ids=' + id + '&hours=3'), jlist('/api/aw/taf?ids=' + id)]);
+    if (m.status !== 'fulfilled' && t.status !== 'fulfilled') return result({ metars: [], taf: null }, false, src);
+    const taf = t.status === 'fulfilled' && Array.isArray(t.value) ? t.value[0] || null : null;
+    return result({ metars: m.status === 'fulfilled' && Array.isArray(m.value) ? m.value : [], taf }, true, src, Date.now(), { partial: m.status !== 'fulfilled' || t.status !== 'fulfilled' });
+  });
+}
+
+const OfpData = { airspace, airports, navaids, obstacles, terrainMax, windsAloft, hazards, pireps, tfrs, metarTaf, statesFor, decoder: canvasDecode,
   // exposed for tests and smoke checks
-  _urls: { addsUrl, omUrl, terrainTile: (x, y) => TERRAIN + TZ + '/' + x + '/' + y + '.png' }, _omWind: omWind, TZ };
+  _urls: { addsUrl, omUrl, terrainTile: (x, y) => TERRAIN + TZ + '/' + x + '/' + y + '.png' }, _omWind: omWind, _norm: { normAirSigmet, normGairmet, normCwa, tfrItems }, TZ };
 if (node) module.exports = OfpData; else root.OfpData = OfpData;
 })(typeof self !== 'undefined' ? self : this);

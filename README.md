@@ -64,6 +64,15 @@ fuel, take-off fuel and registration filled in (or offers to replace the route /
   `ofp.html`; edits are stored in the `ato_procedures` table (re-run the OFP part of `db/schema.sql` to create it).
 - Tokens: **3 tokens once per flight**. Finalising the same OFP again with the same date, departure and destination is
   free; a different flight costs 3 again. Printing and export need a finalised OFP.
+- Winds: new OFPs use **Auto (forecast)**: each leg gets the Open-Meteo (GFS) wind at its altitude, at the leg midpoint and for
+  the UTC hour in which that leg is flown (T/O time plus the EETs before it); the leg's "how" text shows the hour. Existing
+  drafts keep their wind mode.
+- Weather and TFR checks (warnings only, never blocking; layer "Weather & TFR"): SIGMET / convective SIGMET, G-AIRMET and CWA
+  areas the route crosses at its altitude and time, TFRs (AZ, CA, NV, UT, NM, CO, TX) with their own floors and ceilings, PIREPs
+  with turbulence or ice within 25 NM, and METAR/TAF (including TEMPO and PROB groups) at the departure and arrival airport
+  against 3000 ft / 5 SM. Data comes from aviationweather.gov and tfr.faa.gov through the `/api/aw` and `/api/tfr` relays and
+  is cached for 5 minutes (button **Refresh weather**). Hazard forecasts only cover about 12 hours. This is a planning aid:
+  get an official briefing (1800wxbrief / ForeFlight).
 - **Verify everything on the chart.** The checks and the nav log are an aid, not a substitute for flight preparation.
 - Admin: `/admin.html` counts OFPs and lists them next to the calculation log; ledger rows show as "OFP".
 

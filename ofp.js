@@ -44,7 +44,7 @@
       v: 1, id: null, finalKey: null, finalSig: null,
       date: today(), offBlock: "", toTime: "", blockMin: null, reg: "", callsign: "", mission: "", crew: ["", "", ""],
       solo: true, night: false, dep: "KGYR", dest: "KGYR", takeoffFuel: 45, pwr: 75, isaDev: 0, isaAuto: false, cruiseFfOv: null, auto: { legs: {}, src: {}, at: null },
-      windMode: "single", wind: { dir: null, spd: null }, depProc: null, arrProc: null, depTr: null, arrTr: null, mid: [], seq: 0, notes: "",
+      windMode: "auto", wind: { dir: null, spd: null }, depProc: null, arrProc: null, depTr: null, arrTr: null, mid: [], seq: 0, notes: "",
       destPt: { alt: null, msa: null, wind: null, rem: Object.assign(blankRem(), { fullStop: true }) },
     });
     function normState(s) {
@@ -73,7 +73,8 @@
     //   checks = [{leg:index|null, id, level:'err'|'warn'|'info', text}]  (from Safety.checks)    notes = extra lines for the Notes box
     //   unavailable = {airspace:true, terrain:true, wind:true,...}  sources that failed (shown as "unavailable", never as 0)
     const ctx = { airports: {}, msaAuto: {}, msaHigh: {}, windAuto: {}, conflicts: {}, glide: {}, groundFt: {}, checks: [], notes: [], unavailable: {},
-      data: { airspace: [], airports: [], obstacles: [] }, sources: {}, regionKey: "", dataVersion: 0 };
+      data: { airspace: [], airports: [], obstacles: [] }, sources: {}, regionKey: "", dataVersion: 0,
+      legT: {}, wx: null, wxChecks: [], wxSources: {} };
     const hooks = { afterCompute: [], onRoute: [], altOptions: null };
 
     /* ===================================================== small UI helpers ===================================================== */
@@ -282,8 +283,9 @@
     const layers = {};
     const LAYER_DEFS = [
       ["legs", "Route", true, true], ["ato", "ATO points", true], ["personal", "Personal points", true], ["airports", "Airports", true],
-      ["airspace", "Airspace", true], ["glide", "Glide band", false], ["prep", "Chart prep", true], ["emergency", "Emergency fields", true],
+      ["airspace", "Airspace", true], ["wx", "Weather & TFR", true], ["glide", "Glide band", false], ["prep", "Chart prep", true], ["emergency", "Emergency fields", true],
     ];
+    map.createPane("wxPane"); map.getPane("wxPane").style.zIndex = 350; // weather/TFR shapes: below the route and airspace (400), above the chart overlays
     let layerOn = {};
     try { layerOn = JSON.parse(lsGet("ofp.layers") || "{}") || {}; } catch (e) { layerOn = {}; }
     LAYER_DEFS.forEach(([k, label, def, hidden]) => {
@@ -431,7 +433,15 @@
       if (!rec || rec.gk !== gk) rec = state.auto.legs[b.id] = { gk };
       return rec;
     }
-    const autoWindRec = (b, a, alt) => { const rec = legRec(b, a), w = rec && rec.w; return w && w.alt === alt && w.hh === hhKey() ? w : null; };
+    // Auto winds are taken for the hour each leg is flown: ctx.legT[id] = ms at the leg midpoint (from the previous compute), key = UTC hour number.
+    const legMs = (id) => (isNum(ctx.legT[id]) ? ctx.legT[id] : planMs());
+    const legHh = (id) => String(Math.round(legMs(id) / 3600e3));
+    const zHour = (hh) => String(new Date(+hh * 3600e3).getUTCHours()).padStart(2, "0") + "Z";
+    const autoWindRec = (b, a, alt) => {
+      const rec = legRec(b, a), hh = legHh(b.id); if (!rec) return null;
+      const w = rec.w; if (w && w.alt === alt && w.hh === hh) return w;
+      const o = rec.ws && rec.ws[alt + "|" + hh]; return o || null;
+    };
     function magWind(w, a, b) { const v = Nav.variation(Nav.mid(a, b), flightDate()); return { dir: w.spd < 1 ? 0 : Math.round(Nav.norm360(w.dir - v)), spd: Math.round(w.spd) }; }
     function isaFor(b, a, alt) {
       if (state.isaAuto) { const w = autoWindRec(b, a, alt); if (w && isNum(w.tempC)) return Math.round(w.tempC - Perf.isaTemp(alt)); }
@@ -448,7 +458,10 @@
     function windFor(pt, a, alt) {
       if (state.windMode === "auto") {
         const aw = autoWindRec(pt, a, alt);
-        if (aw) { const m = magWind(aw, a, pt); ctx.windAuto[pt.id] = { dir: m.dir, spd: m.spd, src: aw.src, at: aw.at }; return { dir: m.dir, spd: m.spd, src: `auto forecast (${aw.src}, true wind converted to magnetic)` }; }
+        if (aw) {
+          const m = magWind(aw, a, pt); ctx.windAuto[pt.id] = { dir: m.dir, spd: m.spd, src: aw.src, at: aw.at };
+          return { dir: m.dir, spd: m.spd, src: `auto forecast: ${aw.src} for ${zHour(aw.hh)} at ${alt} ft at the leg midpoint: ${p3(aw.dir)}°T/${Math.round(aw.spd)} kt → ${p3(m.dir)}°/${m.spd} kt magnetic` };
+        }
       }
       const own = state.windMode === "leg" ? pt.wind : null;
       if (own && isNum(+own.dir) && isNum(+own.spd) && own.dir !== "" && own.spd !== "") return { dir: +own.dir, spd: +own.spd, src: "entered for this leg" };
@@ -526,6 +539,10 @@
           o.rawDist = r.rawDist; o.altAuto = r.altAuto; o.windSrc = r.windSrc; o.hasWind = r.hasWind; o.pt = r.pt; o.tas = r.tas; o.ffRow = r.ff;
         });
         calc.rows = out.rows; calc.out = out;
+        { // time at each leg midpoint (T/O + EET before the leg + half its EET); used by the next compute for the per-leg wind hour
+          const t0 = planMs(); let cum = 0; ctx.legT = {};
+          out.rows.forEach((o, i) => { const e = isNum(o.eet) ? o.eet : rows[i].tas > 0 ? rows[i].rawDist / rows[i].tas * 60 : 0; ctx.legT[rows[i].id] = t0 + 60000 * (cum + e / 2); cum += e; });
+        }
         calc.header = buildHeader(out, cruiseFf);
         calc.cruiseFf = cruiseFf;
         calc.sig = JSON.stringify([calc.header, out.rows.map((r) => [r.name, r.ident, r.alt, r.msa, r.mc, r.wca, r.gs, r.dist, r.eet, r.legFuel, r.plFuel, r.minFuel, r.pattern, !!r.fixed, r.error || 0]), out.totals]);
@@ -628,7 +645,7 @@
     }
     function renderChecks() {
       const host = byId("checks");
-      const all = (calc.checks || []).concat(ctx.checks || []);
+      const all = (calc.checks || []).concat(ctx.checks || [], ctx.wxChecks || []);
       if (!calc.route) { host.innerHTML = ""; return; }
       const sev = { err: 0, warn: 1, info: 2 };
       all.sort((a, b) => (a.leg == null ? 999 : a.leg) - (b.leg == null ? 999 : b.leg) || sev[a.level] - sev[b.level]);
@@ -1390,6 +1407,7 @@
     // Per-leg results are stored in state.auto so a reload (or reopening a finalised OFP) reuses them; a leg is refetched only
     // when its geometry (terrain/MSA), its altitude or the flight hour (winds) changed, or when "Refresh data" is pressed.
     const D = window.OfpData, S = window.Safety;
+    const WX_ORDER = [["hazards", "Weather hazards"], ["pireps", "PIREPs"], ["tfrs", "TFRs"], ["metar", "METAR/TAF"]];
     const SRC_ORDER = [["terrain", "Terrain"], ["obstacles", "Obstacles"], ["airspace", "Airspace"], ["airports", "Airports"], ["winds", "Winds aloft"]];
     ctx.sources = Object.assign({}, state.auto.src || {});
     let dataGen = 0, dataTimer = null, lastDataSig = "", busy = false, safeTimer = null, lastSafeSig = "", lastOut = "";
@@ -1412,7 +1430,7 @@
     const srcInfo = (r) => ({ ok: !!r.ok, source: r.source, at: r.at, stale: !!r.stale, partial: !!r.partial });
     function dataSig() {
       if (!calc.route || !calc.rows.length) return "";
-      return JSON.stringify([needWind(), hhKey(), calc.rows.map((r, i) => [geomKey(calc.route[i], calc.route[i + 1]), r.alt, !!r.fixed])]);
+      return JSON.stringify([needWind(), calc.rows.map((r, i) => [geomKey(calc.route[i], calc.route[i + 1]), r.alt, !!r.fixed, needWind() ? legHh(r.id) : 0])]);
     }
     // network calls are debounced (900 ms after the last route edit); a newer schedule makes older in-flight results stale
     function scheduleData(force) { dataGen++; clearTimeout(dataTimer); dataTimer = setTimeout(() => ensureData(force), force ? 0 : 900); }
@@ -1434,9 +1452,9 @@
           lastSafeSig = ""; computeSafetySoon();
           renderAutoStatus();
         }
-        const wantWind = needWind(), hh = hhKey(), tms = planMs();
+        const wantWind = needWind();
         let terrOk = true, windOk = true, fetched = 0;
-        if (force) rows.forEach((r, i) => { const rec = getRec(route[i + 1], route[i]); delete rec.msa; delete rec.w; });
+        if (force) rows.forEach((r, i) => { const rec = getRec(route[i + 1], route[i]); delete rec.msa; delete rec.w; delete rec.ws; });
         await pool(rows.map((r, i) => i), 4, async (i) => {
           const r = rows[i], a = route[i], b = route[i + 1], rec = getRec(b, a);
           if (!rec.msa) {
@@ -1447,10 +1465,15 @@
               if (me) { rec.msa = { ft: Math.round(me.ft), lat: me.lat, lon: me.lon, kind: me.kind, msa: me.msa, obs: !ctx.sources.obstacles || ctx.sources.obstacles.ok !== false, at: Date.now() }; fetched++; }
             } else terrOk = false;
           }
-          if (wantWind && !r.fixed && !(rec.w && rec.w.alt === r.alt && rec.w.hh === hh)) {
-            const m = Nav.mid(a, b), w = await D.windsAloft({ lat: m.lat, lon: m.lon, timeMs: tms, altFt: r.alt });
+          const hh = legHh(r.id);
+          if (wantWind && !r.fixed && !autoWindRec(b, a, r.alt)) {
+            const m = Nav.mid(a, b), w = await D.windsAloft({ lat: m.lat, lon: m.lon, timeMs: +hh * 3600e3, altFt: r.alt });
             if (my !== dataGen) return;
-            if (w.ok) { rec.w = { alt: r.alt, hh, dir: w.data.dir, spd: w.data.spd, tempC: w.data.tempC, src: w.source, at: w.at }; fetched++; } else windOk = false;
+            if (w.ok) {
+              rec.w = { alt: r.alt, hh, dir: w.data.dir, spd: w.data.spd, tempC: w.data.tempC, src: w.source, at: w.at }; fetched++;
+              rec.ws = rec.ws || {}; rec.ws[r.alt + "|" + hh] = rec.w;
+              const ks = Object.keys(rec.ws); if (ks.length > 6) ks.sort((x, y) => rec.ws[x].at - rec.ws[y].at).slice(0, ks.length - 6).forEach((k) => { delete rec.ws[k]; });
+            } else windOk = false;
           }
         });
         if (my !== dataGen) return;
@@ -1473,11 +1496,19 @@
         if (s.ok === false) return `<div class="srow err"><b>${label}</b> unavailable${s.partial ? " (partial)" : ""}</div>`;
         return `<div class="srow"><b>${label}</b> ${esc(s.source || "")}${s.stale ? " (stale)" : ""}${s.at ? " · " + ageText(s.at) : ""}</div>`;
       });
+      const wxItems = WX_ORDER.filter(([k]) => ctx.wxSources[k]).map(([k, label]) => {
+        const s = ctx.wxSources[k];
+        if (s.ok === false) return `<div class="srow err"><b>${label}</b> unavailable</div>`;
+        return `<div class="srow"><b>${label}</b> ${esc(s.source || "")}${s.partial ? " (partial)" : ""}${s.at ? " · " + ageText(s.at) : ""}</div>`;
+      });
       const old = Math.abs(planMs() - Date.now()) > 60 * 3600e3 && needWind();
-      host.innerHTML = `<div class="grp">Automatic data</div>${items.join("") || '<div class="srow">Not loaded yet.</div>'}${busy ? '<div class="srow">Loading…</div>' : ""}${old ? '<div class="srow warnc">The flight date is outside the 3-day forecast: the nearest forecast hour is used.</div>' : ""}
-        <div class="srow"><button type="button" class="sm" id="refreshData"${busy ? " disabled" : ""}>Refresh data</button> <span class="fine">Automatic MSA, airspace, glide and winds are aids: verify on the chart.</span></div>`;
+      host.innerHTML = `<div class="grp">Automatic data</div>${items.join("") || '<div class="srow">Not loaded yet.</div>'}${wxItems.join("")}${busy || wxBusy ? '<div class="srow">Loading…</div>' : ""}${old ? '<div class="srow warnc">The flight date is outside the 3-day forecast: the nearest forecast hour is used.</div>' : ""}
+        <div class="srow"><button type="button" class="sm" id="refreshData"${busy ? " disabled" : ""}>Refresh data</button> <button type="button" class="sm" id="refreshWx"${wxBusy ? " disabled" : ""}>Refresh weather</button> <span class="fine">Automatic MSA, airspace, glide and winds are aids: verify on the chart.</span></div>`;
     }
-    byId("autochecks").addEventListener("click", (e) => { if (e.target.id === "refreshData") { lastDataSig = dataSig(); scheduleData(true); } });
+    byId("autochecks").addEventListener("click", (e) => {
+      if (e.target.id === "refreshData") { lastDataSig = dataSig(); scheduleData(true); }
+      if (e.target.id === "refreshWx") { lastWxSig = wxSig(); scheduleWx(true); }
+    });
     setInterval(renderAutoStatus, 60000);
 
     // ---- per-leg safety computation (conflicts, glide, emergency notes) and the overlays
@@ -1629,7 +1660,7 @@
     hooks.altOptions = async (id) => {
       const i = calc.rows.findIndex((r) => r.id === id), r = calc.rows[i];
       if (!r || r.fixed || !S) return toast("No altitude options for this leg");
-      const a = calc.route[i], b = calc.route[i + 1], pt = ptById(id), mid = Nav.mid(a, b), tms = planMs();
+      const a = calc.route[i], b = calc.route[i + 1], pt = ptById(id), mid = Nav.mid(a, b), tms = legMs(id);
       const alts = Nav.semicircularAlts(r.mc, 3000, 12500);
       toast("Loading winds for the options…");
       const ws = {};
@@ -1650,10 +1681,104 @@
       if (m) { pt.alt = +m[1]; changed(false); } else if (res.v === "auto") { pt.alt = null; changed(false); }
     };
 
+    /* ---- weather and TFR checks along the route: warnings only, never blocking ---- */
+    // Legs for Safety: times from T/O (planMs) plus the EETs of the current calculation. Hazards, PIREPs, TFRs and dep/dest METAR/TAF
+    // come from OfpData (aviationweather.gov and tfr.faa.gov through our relays); results are kept in ctx.wx and only redrawn on change.
+    let wxTimer = null, wxGen = 0, lastWxSig = "", wxBusy = false;
+    function wxLegs() {
+      const route = calc.route, rows = calc.rows; if (!S || !route || !rows.length) return [];
+      const prof = S.legProfile(rows.map((r) => ({ dist: r.rawDist, alt: r.alt, prevAlt: r.prevAlt })));
+      const t0 = planMs(); let cum = 0;
+      return rows.map((r, i) => { const e = isNum(r.eet) ? r.eet : 0, lg = { i, a: route[i], b: route[i + 1], profile: prof[i], startMs: t0 + 60000 * cum, endMs: t0 + 60000 * (cum + e) }; cum += e; return lg; });
+    }
+    function wxSig() {
+      const legs = wxLegs(); if (!legs.length) return "";
+      return JSON.stringify([state.dep, state.dest, Math.round(planMs() / 600000), Math.round(legs[legs.length - 1].endMs / 600000), calc.rows.map((r, i) => [geomKey(calc.route[i], calc.route[i + 1]), r.alt])]);
+    }
+    function scheduleWx(force) { clearTimeout(wxTimer); wxTimer = setTimeout(() => ensureWx(force), force ? 0 : 1200); }
+    async function ensureWx(force) {
+      const my = ++wxGen, legs = wxLegs(), route = calc.route;
+      if (!D || !D.hazards || !legs.length) return;
+      wxBusy = true; renderAutoStatus();
+      try {
+        const lats = route.map((p) => p.lat), lons = route.map((p) => p.lon), pad = 0.1;
+        const bb = { s: Math.min(...lats) - pad, n: Math.max(...lats) + pad, w: Math.min(...lons) - pad, e: Math.max(...lons) + pad };
+        const depId = icaoOf(state.dep) || state.dep, destId = icaoOf(state.dest) || state.dest;
+        const [hz, pr, tf, dm, am] = await Promise.all([D.hazards(bb, force), D.pireps(bb, force), D.tfrs(D.statesFor(bb), force), D.metarTaf(depId, force), depId === destId ? null : D.metarTaf(destId, force)]);
+        if (my !== wxGen) return;
+        const t0 = legs[0].startMs, t1 = legs[legs.length - 1].endMs, nowMs = Date.now(), far = t0 - nowMs > 12 * 3600e3;
+        const mid = Nav.mid(route[0], route[route.length - 1]);
+        const gnd = Nav.dist(mid, aptCoord(state.dep) || mid) <= Nav.dist(mid, aptCoord(state.dest) || mid) ? aptElev(state.dep) : aptElev(state.dest);
+        const items = (hz.data || []).concat(tf.data || []);
+        const hits = S.hazardHits(legs, items, { groundFt: gnd });
+        const pirs = S.pirepsNear(legs, pr.data || [], 25).filter((x) => x.turb || x.ice);
+        const wxOf = (r, id, eta) => (r && r.ok ? S.vfrWx(r.data.metars, r.data.taf, eta, { ceilFt: 3000, visSm: 5, nowMs: eta }).map((c) => ({ level: c.level === "warn" ? "warn" : "info", text: id + ": " + c.text, code: c.code })) : [{ level: "info", text: `${id}: METAR/TAF unavailable - check your official briefing`, code: "wxMissing" }]);
+        const depWx = wxOf(dm, depId, t0), destWx = wxOf(am || dm, destId, t1);
+        const ck = [], rowId = (i) => (calc.rows[i] ? calc.rows[i].id : null);
+        const add = (level, text, leg, code) => ck.push({ level, text, code, leg: leg == null ? null : leg + 1, id: leg == null ? null : rowId(leg) });
+        const seen = new Set();
+        hits.forEach((h) => {
+          const key = h.leg + "|" + h.item.kind + "|" + h.item.id; if (h.item.kind === "TFR" && seen.has(key)) return; seen.add(key);
+          const lab = S.hazardLabel(h.item), where = h.lastNm - h.firstNm < 0.5 ? `at ${h.firstNm} NM` : `${h.firstNm}–${h.lastNm} NM along the leg`;
+          if (h.item.kind === "TFR") add("warn", `Leg ${h.leg + 1} passes through ${lab}${h.item.name ? " (" + h.item.name + ")" : ""}, ${where}, active at your time${h.item.agl ? `; AGL limits use ${Math.round(gnd)} ft ground (verify)` : ""}`, h.leg, "tfr");
+          else add("warn", `Leg ${h.leg + 1} crosses ${lab}, ${where}`, h.leg, "hazard");
+        });
+        const ageMin = (p) => Math.max(0, Math.round((nowMs - p.obsTime * 1000) / 60000));
+        pirs.slice(0, 8).forEach((x) => {
+          const p = x.pirep, what = [x.turb ? `${[p.tbInt1, p.tbInt2].filter((v) => v && !/^NEG/i.test(v))[0] || ""} TURB`.trim() : "", x.ice ? `${[p.icgInt1, p.icgInt2].filter((v) => v && !/^NEG/i.test(v))[0] || ""} ICE`.trim() : ""].filter(Boolean).join(" ");
+          add("info", `PIREP near leg ${x.leg + 1}: ${what}${isNum(+p.fltLvl) && p.fltLvl !== null && p.fltLvl !== "" ? " FL" + String(Math.round(p.fltLvl)).padStart(3, "0") : ""} (${isNum(p.obsTime) ? ageMin(p) + " min ago" : "age unknown"}, ${x.distNm} NM from track)`, x.leg, "pirep");
+        });
+        if (pirs.length > 8) add("info", `${pirs.length - 8} more PIREPs with turbulence or ice near the route (see the map)`, null, "pirepMore");
+        const wxSeen = new Set();
+        [...depWx, ...destWx].forEach((c) => { if (!wxSeen.has(c.text)) { wxSeen.add(c.text); add(c.level, c.text, null, c.code); } });
+        if (!hz.ok) add("info", "Weather hazards unavailable – check your official briefing", null, "wxHazMissing");
+        else if (hz.partial) add("info", "Some weather hazard products (SIGMET/G-AIRMET/CWA) did not load – check your official briefing", null, "wxHazPartial");
+        if (!pr.ok) add("info", "PIREPs unavailable – check your official briefing", null, "wxPirepMissing");
+        if (!D.statesFor(bb).length) add("info", "TFRs are only checked for AZ, CA, NV, UT, NM, CO and TX – check TFRs for this route in your briefing", null, "tfrArea");
+        else if (!tf.ok) add("info", "TFRs unavailable – check your official briefing", null, "tfrMissing");
+        else if (tf.partial) add("info", "Some TFR details did not load – check your official briefing", null, "tfrPartial");
+        if (far) add("info", "Hazard forecasts don't cover your flight time yet – refresh closer to departure", null, "wxFar");
+        add("info", "Weather checks are a planning aid – get an official briefing (1800wxbrief/ForeFlight)", null, "wxAid");
+        ctx.wx = { hits, pireps: pirs, depWx, destWx, items, pirepList: pr.data || [], t0, t1, sources: { hazards: srcInfo(hz), pireps: srcInfo(pr), tfrs: srcInfo(tf), metar: srcInfo(dm) } };
+        ctx.wxSources = ctx.wx.sources; ctx.wxChecks = ck;
+        drawWx();
+      } catch (e) { console.error(e); }
+      finally { if (my === wxGen) { wxBusy = false; renderAutoStatus(); renderChecks(); } }
+    }
+    const WX_STYLE = { SIGMET: { color: "#d32f2f", dashArray: "7 5", fillOpacity: 0.07 }, CSIGMET: { color: "#d32f2f", dashArray: "7 5", fillOpacity: 0.09 }, CWA: { color: "#d32f2f", dashArray: "3 4", fillOpacity: 0.06 },
+      AIRMET: { color: "#f9a825", dashArray: "7 5", fillOpacity: 0.06 }, TFR: { color: "#d32f2f", fillOpacity: 0.14 } };
+    function drawWx() {
+      layers.wx.clearLayers();
+      const w = ctx.wx; if (!w) return;
+      const t0 = w.t0, t1 = w.t1, tm = (t0 + t1) / 2;
+      w.items.forEach((it) => {
+        if ((isNum(it.to) && it.to < t0 - 3600e3) || (isNum(it.from) && it.from > t1 + 3600e3)) return;   // not active around the flight
+        let polys = it.polys || [];
+        if (it.snapshots && it.snapshots.length) polys = it.snapshots.slice().sort((a, b) => Math.abs(a.validMs - tm) - Math.abs(b.validMs - tm))[0].polys;
+        const st = Object.assign({ weight: it.kind === "TFR" ? 2.2 : 1.8, opacity: 0.9, fillColor: (WX_STYLE[it.kind] || WX_STYLE.SIGMET).color, pane: "wxPane" }, WX_STYLE[it.kind] || WX_STYLE.SIGMET);
+        const txt = `<b>${esc(S.hazardLabel(it))}</b>${it.name ? "<br>" + esc(it.name) : ""}${it.raw ? "<br>" + esc(String(it.raw).replace(/\s+/g, " ").slice(0, 200)) : ""}<br><i>Planning aid: verify in your briefing</i>`;
+        const shapes = polys.map((r) => L.polygon(r, st)).concat((it.circles || []).map((c) => L.circle([c.lat, c.lon], Object.assign({ radius: c.radiusNm * 1852 }, st))));
+        shapes.forEach((sh) => {
+          sh.bindTooltip(txt, { sticky: true });
+          sh.on("contextmenu", (e) => { L.DomEvent.stop(e); L.popup().setLatLng(e.latlng).setContent(txt).openOn(map); });
+          sh.addTo(layers.wx);
+        });
+      });
+      (w.pirepList || []).forEach((p) => {
+        const has = (a, b) => [a, b].some((v) => v && !/^NEG/i.test(String(v)));
+        const tb = has(p.tbInt1, p.tbInt2), ic = has(p.icgInt1, p.icgInt2); if (!tb && !ic) return;
+        const sev = /SEV|EXTRM/i.test([p.tbInt1, p.tbInt2].join(" ")) ? "#b71c1c" : tb ? (/MOD/i.test([p.tbInt1, p.tbInt2].join(" ")) ? "#ef6c00" : "#f9a825") : "#1976d2";
+        L.circleMarker([p.lat, p.lon], { radius: 5, color: "#222", weight: 1, fillColor: sev, fillOpacity: 0.95, pane: "wxPane" })
+          .bindTooltip(`PIREP: ${esc(String(p.rawOb || "").slice(0, 200))}`, { sticky: true }).addTo(layers.wx);
+      });
+    }
+
     hooks.afterCompute.push(() => {
       renderAutoStatus();
       if (dragging) return;
       drawPrep();
+      const ws = wxSig();
+      if (ws && ws !== lastWxSig) { lastWxSig = ws; scheduleWx(false); }
       const ds = dataSig();
       if (ds && ds !== lastDataSig) { lastDataSig = ds; scheduleData(false); }
       computeSafetySoon();

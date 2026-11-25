@@ -497,6 +497,11 @@ function vfrWxFrom(metar, tafPeriod, o, tafInfo) {
     src('METAR at ' + Z2(metar.obsTime), metar, metar.visib, metar.wgst, (metar.wxString || '') + (cb ? ' ' + cb : ''));
   }
   if (tafPeriod) src('TAF at ' + Z2(tafPeriod.timeFrom), tafPeriod, tafPeriod.visib, tafPeriod.wgst, tafPeriod.wxString);
+  // TEMPO / PROB groups covering the ETA (o.tempo, picked by vfrWx) are judged with the same thresholds
+  (o && o.tempo || []).forEach((f) => {
+    const kind = /TEMPO/.test(f.fcstChange || '') ? 'TEMPO' : 'PROB' + (f.probability || '');
+    src('TAF ' + kind + ' ' + Z2(f.timeFrom).slice(0, 2) + '\u2013' + Z2(f.timeTo), f, f.visib, f.wgst, f.wxString);
+  });
   if (tafInfo === 'none') out.push({ level: 'info', code: 'noTaf', text: 'No TAF for this airport' });
   else if (tafInfo === 'outside') out.push({ level: 'info', code: 'tafOutside', text: 'ETA outside TAF validity' });
   return out;
@@ -518,7 +523,8 @@ function vfrWx(metars, taf, etaMs, opts) {
         .sort((a, b) => b.timeFrom - a.timeFrom)[0] || null;
     }
   }
-  return vfrWxFrom(metar, period, o, info);
+  const tempo = info ? [] : (taf.fcsts || []).filter((f) => (/TEMPO|PROB/.test(f.fcstChange || '') || f.probability) && f.timeFrom <= etaS && etaS < f.timeTo);
+  return vfrWxFrom(metar, period, Object.assign({}, o, { tempo }), info);
 }
 
 // Short label: "AIRMET TANGO TURB 080-FL180 15-21Z" or "TFR 6/1234 SFC-17999 ft".
