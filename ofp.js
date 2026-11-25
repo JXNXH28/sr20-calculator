@@ -200,9 +200,11 @@
     /* ===================================================== map ===================================================== */
     L.Icon.Default.imagePath = "vendor/images/";
     const map = L.map("map", { zoomControl: true, maxZoom: 14, minZoom: 5, tap: true, doubleClickZoom: false }).setView([33.42, -112.38], 10);
-    // FAA tiles exist only to z12. detectRetina: on HiDPI each 256px tile covers 128 CSS px (requests one zoom higher, capped at z12 by maxNativeZoom).
-    // Leaflet adds zoomOffset after clamping to maxNativeZoom, so on retina the native cap must be 11 (+1 offset = z12)
-    const tileOpts = { maxNativeZoom: L.Browser.retina ? 11 : 12, maxZoom: 14, attribution: "FAA", keepBuffer: 3, detectRetina: true };
+    // detectRetina: on HiDPI each 256px tile covers 128 CSS px and Leaflet requests one zoom higher. It also lowers the
+    // layer's maxZoom by one (hiding it at the map's top zoom), so retina layers get maxZoom +1, and maxNativeZoom -1
+    // because the +1 offset is added after clamping. FAA tiles exist only to z12.
+    const R = L.Browser.retina ? 1 : 0;
+    const tileOpts = { maxNativeZoom: 12 - R, maxZoom: 14 + R, attribution: "FAA", keepBuffer: 3, detectRetina: true };
     const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
     const OSM_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
     map.createPane("osmOverlay"); map.getPane("osmOverlay").style.zIndex = 250; // above the chart tiles (200), below airspace/route/markers (400+)
@@ -210,25 +212,57 @@
       tac: L.tileLayer(tileUrl("VFR_Terminal"), tileOpts), sect: L.tileLayer(tileUrl("VFR_Sectional"), tileOpts),
       osm: L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR, keepBuffer: 3 }),
     };
+    // Our own sharper tiles (docs/CHARTS.md): {CHARTS_PUBLIC_URL}/current.json names the edition, zooms and coverage.
+    // Used where they cover the map centre; the FAA tiles stay the fallback everywhere else or if they fail to load.
+    const hosted = {}; // tac / sect -> {layer, bounds, minZoom, errs, bad}
+    (async () => {
+      const base = String((window.SB_CONFIG && window.SB_CONFIG.charts) || "").replace(/\/+$/, "");
+      if (!/^https?:\/\//.test(base)) return;
+      try {
+        const r = await fetch(base + "/current.json", { cache: "no-cache", signal: AbortSignal.timeout(8000) });
+        const m = await r.json();
+        if (!r.ok || !/^\d{4}-\d{2}-\d{2}$/.test(m.edition)) return;
+        [["tac", "tac"], ["sect", "sec"]].forEach(([k, dir]) => {
+          const c = m.layers && m.layers[dir];
+          if (!c || !(c.maxZoom >= c.minZoom) || !Array.isArray(c.bounds)) return;
+          const bounds = L.latLngBounds(c.bounds);
+          const layer = L.tileLayer(`${base}/${m.edition}/${dir}/{z}/{x}/{y}.webp`, {
+            minNativeZoom: c.minZoom - R, maxNativeZoom: c.maxZoom - R, maxZoom: 14 + R, bounds,
+            attribution: `FAA charts, edition ${m.edition}`, keepBuffer: 3, detectRetina: true,
+          });
+          const h = { layer, bounds, minZoom: c.minZoom - R, errs: 0, bad: false };
+          layer.on("tileload", () => { h.errs = 0; });
+          layer.on("tileerror", () => { if (++h.errs >= 6 && !h.bad) { h.bad = true; applyBase(); } });
+          hosted[k] = h;
+        });
+        applyBase();
+      } catch (e) { /* no hosted tiles: FAA tiles only */ }
+    })();
+    function layerFor(k) {
+      const h = hosted[k];
+      return h && !h.bad && map.getZoom() >= h.minZoom && h.bounds.contains(map.getCenter()) ? h.layer : tiles[k];
+    }
     let osmOverlay = null;
     let baseMode = ["auto", "tac", "sect", "osm"].includes(lsGet("ofp.base")) ? lsGet("ofp.base") : "auto";
-    let tacBad = null, tacErr = 0, curBase = null;
+    let tacBad = null, tacErr = 0, curLayer = null;
     function applyBase() {
       const want = baseMode === "tac" ? "tac" : baseMode === "sect" ? "sect" : baseMode === "osm" ? "osm" : tacBad || map.getZoom() < 10 ? "sect" : "tac";
-      if (want !== curBase) {
-        if (curBase) map.removeLayer(tiles[curBase]);
+      const layer = layerFor(want);
+      if (layer !== curLayer) {
+        if (curLayer) map.removeLayer(curLayer);
         map.setMaxZoom(want === "osm" ? 17 : 14);
-        tiles[want].addTo(map); tiles[want].bringToBack(); curBase = want;
+        layer.addTo(map); layer.bringToBack(); curLayer = layer;
       }
       $$("#mapctl [data-base]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.base === baseMode)));
     }
     tiles.tac.on("tileerror", () => {
-      if (baseMode !== "auto" || tacBad || curBase !== "tac" || map.getZoom() < 10) return;
+      if (baseMode !== "auto" || tacBad || curLayer !== tiles.tac || map.getZoom() < 10) return;
       if (++tacErr >= 4) { tacBad = map.getCenter(); applyBase(); toast("No TAC tiles here, showing the sectional"); }
     });
     map.on("zoomend", () => { tacErr = 0; applyBase(); map.getContainer().classList.toggle("zlow", map.getZoom() < 9); });
     map.on("moveend", () => {
       tacErr = 0;
+      if (!tacBad) applyBase();
       if (tacBad && Nav.dist({ lat: tacBad.lat, lon: tacBad.lng }, { lat: map.getCenter().lat, lon: map.getCenter().lng }) > 40) { tacBad = null; applyBase(); }
     });
     $$("#mapctl [data-base]").forEach((b) => b.addEventListener("click", () => { baseMode = b.dataset.base; lsSet("ofp.base", baseMode); tacBad = null; tacErr = 0; applyBase(); }));
