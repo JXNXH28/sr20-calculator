@@ -1,2 +1,6 @@
 .DS_Store
 node_modules/
+
+# chart tile pipeline scratch + output (tools/charts)
+tools/charts/out/
+tools/charts/work/

@@ -1,0 +1,77 @@
+name: Chart tiles
+
+# Cuts the current FAA TAC + sectional GeoTIFFs into our own WEBP tiles and publishes them to Cloudflare R2.
+# See docs/CHARTS.md. FAA editions change every 56 days; the weekly run is a no-op until a new edition is out.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild and upload even if R2 already has the current FAA edition"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chart-tiles
+  cancel-in-progress: false
+
+jobs:
+  tiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      CHARTS_PUBLIC_URL: ${{ vars.CHARTS_PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare FAA edition with R2
+        id: check
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          faa=$(python3 tools/charts/prep.py edition sec Phoenix | cut -f1)
+          have=none
+          if [ -n "${CHARTS_PUBLIC_URL:-}" ]; then
+            have=$(curl -fsS --max-time 30 "${CHARTS_PUBLIC_URL%/}/current.json" \
+              | python3 -c 'import json,sys;print(json.load(sys.stdin)["edition"])' 2>/dev/null || echo none)
+          fi
+          echo "FAA current edition: $faa; published on R2: $have"
+          if [ "$faa" = "$have" ] && [ "${FORCE:-false}" != "true" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date - nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "Building edition $faa (was $have)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Free disk space
+        if: steps.check.outputs.build == 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup || true
+          df -h /
+
+      - name: Build tiles (GDAL container)
+        if: steps.check.outputs.build == 'true'
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            -e OUT=/repo/tools/charts/out -e WORK=/repo/tools/charts/work \
+            ghcr.io/osgeo/gdal:ubuntu-small-latest bash tools/charts/build.sh
+          df -h /
+          du -sh tools/charts/out
+
+      - name: Upload to R2
+        if: steps.check.outputs.build == 'true'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" tools/charts/out
+          bash tools/charts/upload.sh
+          { echo; echo '```json'; cat tools/charts/out/current.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
