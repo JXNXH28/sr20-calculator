@@ -259,7 +259,7 @@
       if (baseMode !== "auto" || tacBad || curLayer !== tiles.tac || map.getZoom() < 10) return;
       if (++tacErr >= 4) { tacBad = map.getCenter(); applyBase(); toast("No TAC tiles here, showing the sectional"); }
     });
-    map.on("zoomend", () => { tacErr = 0; applyBase(); map.getContainer().classList.toggle("zlow", map.getZoom() < 9); });
+    map.on("zoomend", () => { tacErr = 0; applyBase(); map.getContainer().classList.toggle("zlow", map.getZoom() < 9); map.getContainer().classList.toggle("zvlow", map.getZoom() < 8); });
     map.on("moveend", () => {
       tacErr = 0;
       if (!tacBad) applyBase();
@@ -314,7 +314,7 @@
       layerOn[k] = e.target.checked; lsSet("ofp.layers", JSON.stringify(layerOn));
       if (e.target.checked) layers[k].addTo(map); else map.removeLayer(layers[k]);
     });
-    map.getContainer().classList.toggle("zlow", map.getZoom() < 9);
+    map.getContainer().classList.toggle("zlow", map.getZoom() < 9); map.getContainer().classList.toggle("zvlow", map.getZoom() < 8);
 
     const ll = (p) => [p.lat, p.lon];
     const ptLabel = (p) => esc(p.name || p.ident || "");
@@ -1029,6 +1029,18 @@
         }
         if (name === "fpl") return download(new Blob([OP.fpl(exportRoute())], { type: "application/octet-stream" }), fileBase() + ".fpl");
         if (name === "copy") return toast((await copyText(OP.routeString(exportRoute()))) ? "Route copied" : "Could not copy the route");
+        if (name === "ff") {
+          // Cruise TAS from the longest leg (same leg cruiseFfOf uses for FF); max altitude over all rows.
+          const rows = calc.rows || [], legs = rows.filter((r) => !r.fixed);
+          const cruise = legs.reduce((b, r) => (!b || r.dist > b.dist ? r : b), null);
+          const alts = rows.map((r) => r.alt).filter(isNum);
+          // ETD in UTC from date + T/O time in the departure airport's time zone (planMs)
+          const etd = /^\d{4}-\d\d-\d\d$/.test(state.date || "") && hhmm(state.toTime) ? new Date(planMs()) : null;
+          const url = OP.foreflightUrl(exportRoute(), { tas: cruise ? cruise.tas : null, ff: cruiseFfOf(rows), alt: alts.length ? Math.max(...alts) : null, reg: state.reg, etd });
+          if (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) location.href = url;
+          else toast("Opens ForeFlight on iPad/iPhone. Use the .fpl file or Copy route on this device.");
+          return;
+        }
         if (name === "send") {
           const t = calc.out.totals;
           lsSet(HANDOFF_KEY, JSON.stringify({ dep: icaoOf(state.dep) || state.dep, dest: icaoOf(state.dest) || state.dest, date: state.date, depTime: hhmm(state.toTime), durMin: t.eet, tripFuel: t.trip, takeoffFuel: state.takeoffFuel, reg: state.reg }));
@@ -1295,38 +1307,69 @@
         });
       });
     }
-    // ---- chart-prep marks (B02 p44), on screen only
-    const tick = (p, brg, nm) => L.polyline([ll(p), ll(Nav.offset(p, brg, nm))], { color: "#222", weight: 2, interactive: false });
+    // ---- chart-prep marks (B02 p44/p88), on screen only. Positions are geographic, sizes are screen pixels.
+    const TK = 14, ARR_OFF = 38;
+    function prepIcon(cls, w, h, html, dx, dy) { // marker centred on the point, shifted by (dx,dy) screen px
+      return L.divIcon({ className: cls, html, iconSize: [w, h], iconAnchor: [w / 2 - (dx || 0), h / 2 - (dy || 0)] });
+    }
     function drawPrep() {
       layers.prep.clearLayers();
       const route = calc.route, rows = calc.rows; if (!route || !rows.length || dragging) return;
       const prof = S ? S.legProfile(rows.map((r) => ({ dist: r.rawDist, alt: r.alt, prevAlt: r.prevAlt }))) : [];
+      const add = (m) => m.addTo(layers.prep);
+      const mk = (pt, icon) => add(L.marker(map.layerPointToLatLng(pt), { icon, interactive: false, keyboard: false }));
       rows.forEach((r, i) => {
-        const a = route[i], b = route[i + 1], len = r.rawDist, course = Nav.brg(a, b);
+        const a = route[i], b = route[i + 1], len = r.rawDist;
         if (i < rows.length - 1) L.circle(ll(b), { radius: 1852, color: "#c2188a", weight: 2, fill: false, interactive: false }).addTo(layers.prep);
-        if (r.fixed || len < 1) return;
-        // 10 NM ticks counted back from the checkpoint (left of course), 2-min ticks from the previous point (right of course)
-        for (let d = 10; d < len - 0.5; d += 10) {
-          const p = Nav.offset(b, course + 180, d);
-          tick(p, course - 90, 1.4).addTo(layers.prep);
-          L.marker(ll(Nav.offset(p, course - 90, 2.1)), { icon: L.divIcon({ className: "prepTk", html: String(d), iconSize: null }), interactive: false }).addTo(layers.prep);
+        if (!(len >= 0.2)) return;
+        const pa = map.latLngToLayerPoint(ll(a)), pb = map.latLngToLayerPoint(ll(b));
+        const sl = pa.distanceTo(pb);
+        if (sl > 1) {
+          const ux = (pb.x - pa.x) / sl, uy = (pb.y - pa.y) / sl, nx = -uy, ny = ux; // n = right of the direction of flight on screen
+          const at = (d) => L.point(pa.x + ux * sl * d / len, pa.y + uy * sl * d / len);
+          const tickAt = (p, side, label) => {
+            const s = side * TK, W = 2 * TK + 8, c = W / 2;
+            const x2 = (c + nx * s).toFixed(1), y2 = (c + ny * s).toFixed(1);
+            mk(p, prepIcon("pTick", W, W, `<svg width="${W}" height="${W}" viewBox="0 0 ${W} ${W}"><line x1="${c}" y1="${c}" x2="${x2}" y2="${y2}" stroke="#fff" stroke-width="4.5"/><line x1="${c}" y1="${c}" x2="${x2}" y2="${y2}" stroke="#111" stroke-width="2"/></svg>`));
+            if (label) mk(p, prepIcon("pTxt", 30, 14, `<span>${label}</span>`, nx * side * (TK + 11), ny * side * (TK + 9)));
+          };
+          if (len >= 3) {
+            // 10 NM distance-remaining ticks counted back from the next checkpoint, LEFT of the course
+            for (let d = 10; d < len - 0.5; d += 10) tickAt(at(len - d), -1, String(d));
+            // 2-minute ticks from the leg start, RIGHT of the course; every second one labelled
+            let step = null;
+            if (!r.fixed && isNum(r.gs) && r.gs > 0) step = r.gs * 2 / 60; else if (isNum(r.eet) && r.eet > 0) step = len / r.eet * 2;
+            if (step && step > 0) for (let k = 1, d = step; d < len - step * 0.3 && k < 200; k++, d = step * (k)) tickAt(at(d), 1, k % 2 === 0 ? Nav.fmtEet(2 * k) : "");
+          }
+          // leg arrow with 1 | MC | EET | MSA/100
+          const segs = [String(i + 1), p3(r.mc), isNum(r.eet) ? Nav.fmtEet(r.eet) : "?", isNum(r.msa) ? String(Math.round(r.msa / 100)).padStart(2, "0") : "?"];
+          const ws = segs.map((s) => s.length * 6.8 + 12), tw = ws.reduce((x, y) => x + y, 0);
+          let A = Math.min(sl * 0.45, tw + 40), compact = A < tw + 10;
+          if (compact) A = tw + 18;
+          const W = Math.ceil(A + 20), H = 40, c = [W / 2, H / 2], th = Math.atan2(uy, ux) * 180 / Math.PI, flip = Math.abs(th) > 90;
+          let x = -tw / 2, txt = "", dv = "";
+          segs.forEach((s, k) => { txt += `<text x="${(x + ws[k] / 2).toFixed(1)}" y="4" text-anchor="middle">${s}</text>`; x += ws[k]; if (k < segs.length - 1) dv += `<line class="dv" x1="${x.toFixed(1)}" y1="-7" x2="${x.toFixed(1)}" y2="7"/>`; });
+          const h = A / 2, e = compact ? tw / 2 + 9 : h;
+          const sh = (x1, x2) => x2 - x1 > 0.5 ? `<line x1="${x1}" y1="0" x2="${x2}" y2="0"/>` : "";
+          const lines = (compact ? "" : sh(-h, -tw / 2) + `<line x1="${-h}" y1="-5" x2="${-h}" y2="5"/>`) + sh(compact ? tw / 2 : tw / 2, e - 1) + `<polygon points="${e},0 ${e - 9},-4.5 ${e - 9},4.5" />`;
+          const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><g transform="translate(${c[0]},${c[1]}) rotate(${th.toFixed(1)})">`
+            + `<g class="aw" stroke="#fff" stroke-width="4.5" fill="#fff" stroke-linejoin="round">${lines}</g><g class="ak" stroke="#111" stroke-width="2" fill="#111">${lines}</g>`
+            + `<g${flip ? ' transform="rotate(180)"' : ""}>${dv}<g class="at">${txt}</g></g></g></svg>`;
+          const cen = L.point(pa.x + (pb.x - pa.x) * 0.3 + nx * ARR_OFF, pa.y + (pb.y - pa.y) * 0.3 + ny * ARR_OFF); // before the middle: drawLegs' label sits there
+          mk(cen, prepIcon("pArrow", W, H, svg));
         }
-        if (isNum(r.gs) && r.gs > 0) { const step = r.gs * 2 / 60; for (let d = step; d < len - step * 0.3; d += step) tick(Nav.along(a, b, d / len), course + 90, 0.9).addTo(layers.prep); }
-        // leg label n-MC-:EET-MSA/100, rotated along the leg, near the start of the leg
-        let ang = course - 90; ang = ((ang + 540) % 360) - 180; if (ang > 90) ang -= 180; if (ang < -90) ang += 180;
-        const q = Nav.along(a, b, Math.min(0.3, 4 / len));
-        L.marker(ll(q), { icon: L.divIcon({ className: "", html: `<div class="prepLbl" style="transform:translate(-50%,-50%) rotate(${ang}deg) translateY(-13px)">${i + 1}–${p3(r.mc)}–${isNum(r.eet) ? Nav.fmtEet(r.eet) : "?"}–${isNum(r.msa) ? Math.round(r.msa / 100) : "?"}</div>`, iconSize: [0, 0] }), interactive: false }).addTo(layers.prep);
         // highest elevation
         const hi = ctx.msaHigh[r.id];
         if (hi) L.marker([hi.lat, hi.lon], { icon: L.divIcon({ className: "", html: `<div class="hiMk">▲ ${Math.round(hi.ft)}</div>`, iconSize: [0, 0] }) }).bindTooltip("Highest point near leg " + (i + 1) + " (verify on chart)").addTo(layers.prep);
         // TOC / TOD
         (prof[i] || []).forEach((sg) => {
-          const at = (nm, t) => L.marker(ll(Nav.along(a, b, Math.min(1, nm / len))), { icon: L.divIcon({ className: "", html: `<div class="prepMk">${t}</div>`, iconSize: [0, 0] }), interactive: false }).addTo(layers.prep);
-          if (sg.altTo > sg.altFrom + 1 && sg.distTo > 0.5) at(sg.distTo, "TOC");
-          if (sg.altTo < sg.altFrom - 1 && sg.distFrom > 0.5) at(sg.distFrom, "TOD");
+          const pm = (nm, t) => L.marker(ll(Nav.along(a, b, Math.min(1, nm / len))), { icon: L.divIcon({ className: "", html: `<div class="prepMk">${t}</div>`, iconSize: [0, 0] }), interactive: false }).addTo(layers.prep);
+          if (sg.altTo > sg.altFrom + 1 && sg.distTo > 0.5) pm(sg.distTo, "TOC");
+          if (sg.altTo < sg.altFrom - 1) pm(sg.distFrom, "TOD");
         });
       });
     }
+    map.on("zoomend", () => { if (calc.route) drawPrep(); });
 
     // ---- altitude recommender (the ▾ button in the Alt cell)
     hooks.altOptions = async (id) => {

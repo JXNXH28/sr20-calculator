@@ -132,8 +132,13 @@ table.legs input.wnd{width:58px}
 .popbtns b{font-size:13px}
 .popbtns button{padding:4px 8px;font-size:12px;color:#111;background:#fff}
 #autochecks .srow{font-size:12px;margin:2px 0}#autochecks .grp{font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.65;margin-top:6px}
-.prepLbl{position:absolute;left:0;top:0;white-space:nowrap;background:#fffe;color:#111;border:1px solid #0005;border-radius:3px;font:700 11px/14px -apple-system,Segoe UI,Arial,sans-serif;padding:0 3px;pointer-events:none}
-.prepTk{color:#111;font:700 10px/10px -apple-system,Segoe UI,Arial,sans-serif;text-shadow:0 0 3px #fff,0 0 3px #fff;margin:-5px 0 0 -5px;pointer-events:none}
+.pTick,.pArrow,.pTxt{pointer-events:none}
+.pTxt span{display:block;text-align:center;color:#111;font:700 10px/14px -apple-system,Segoe UI,Arial,sans-serif;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 0 3px #fff}
+.pArrow svg{overflow:visible}
+.pArrow .at text{fill:#111;stroke:#fff;stroke-width:3px;paint-order:stroke;font:700 11px -apple-system,Segoe UI,Arial,sans-serif}
+.pArrow .dv{stroke:#111;stroke-width:1}
+.zlow .pTxt,.zlow .pArrow .at,.zlow .pArrow .dv{display:none}
+.zvlow .pTick,.zvlow .pArrow,.zvlow .pTxt{display:none}
 .prepMk{position:absolute;white-space:nowrap;transform:translate(-50%,-50%);background:#ffd400;color:#111;border:1px solid #000;border-radius:3px;font:700 10px/12px -apple-system,Segoe UI,Arial,sans-serif;padding:0 3px;pointer-events:none}
 .hiMk{position:absolute;white-space:nowrap;transform:translate(-50%,-50%);background:#fff;color:#b8321f;border:1px solid #b8321f;border-radius:3px;font:700 11px/14px -apple-system,Segoe UI,Arial,sans-serif;padding:0 3px}
 /* dialogs, how, toast */
@@ -261,6 +266,7 @@ dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #
           <button type="button" data-out="print">Open to print</button>
           <button type="button" data-out="download">Download PDF</button>
           <button type="button" data-out="fpl">ForeFlight .fpl</button>
+          <button type="button" data-out="ff">Open in ForeFlight</button>
           <button type="button" data-out="copy">Copy route</button>
           <button type="button" data-out="send">Send to T/O sheets</button>
         </div>

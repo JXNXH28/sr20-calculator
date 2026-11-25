@@ -363,6 +363,25 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   console.log((ok ? 'ok   ' : 'FAIL ') + 'OFP buildPdf bytes ' + out.join(' ')); if (!ok) fail++;
 }
 // ==== end print ====
+// ==== ffurl tests (OFP) ====
+{
+  const OPF = require('./ofpprint.js');
+  const streq = (name, got, want) => { const ok = got === want; if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + ' got ' + got + ' want ' + want); };
+  const etd = new Date(Date.UTC(2026, 10, 24, 17, 5, 0));
+  const kgyr = { type: 'AIRPORT', ident: 'KGYR', lat: 33.4, lon: -112.4 };
+  const pt = { type: 'USER WAYPOINT', ident: null, lat: 33.4225, lon: -112.3760 };
+  const e63 = { type: 'AIRPORT', ident: 'E63', lat: 33.3, lon: -112.2 };
+  const full = { tas: 152, ff: 12.8, alt: 6500, reg: 'n-123ab', etd };
+  const P = 'foreflightmobile://maps/search?q=';
+  streq('ff url full', OPF.foreflightUrl([kgyr, pt, e63], full), P + 'KGYR+332521N%2F1122234W+E63+152kts+12.8gph+6500ft+N123AB+20261124T17%3A05%3A00Z');
+  streq('ff url ff 13.0 drops .0', OPF.foreflightUrl([kgyr], { tas: 100, ff: 13.0 }), P + 'KGYR+100kts+13gph');
+  streq('ff url only waypoints when opts missing', OPF.foreflightUrl([kgyr, e63], {}), P + 'KGYR+E63');
+  streq('ff url no opts', OPF.foreflightUrl([kgyr, e63]), P + 'KGYR+E63');
+  streq('ff url seconds carry to degrees', OPF.foreflightUrl([{ type: 'USER WAYPOINT', lat: 33.999999, lon: 10 }], {}), P + '340000N%2F0100000E');
+  streq('ff url southern/eastern hemisphere', OPF.foreflightUrl([{ type: 'USER WAYPOINT', lat: -33.5, lon: 151.25 }], {}), P + '333000S%2F1511500E');
+  streq('ff url collapses consecutive duplicates', OPF.foreflightUrl([kgyr, kgyr, e63, e63, kgyr], {}), P + 'KGYR+E63+KGYR');
+}
+// ==== end ffurl ====
 // ==== safety tests (OFP) ====
 {
   const Nav = require('./nav.js'), S = require('./safety.js');

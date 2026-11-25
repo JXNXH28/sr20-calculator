@@ -395,7 +395,35 @@
     return lines.join("\n");
   }
 
-  const OfpPrint = { layout, buildPdf, fpl, routeString, MAX_LEGS, LEFT_LEGS, covers, cell, hbox, PAGE_H, PAGE_W };
+  // ForeFlight Mobile URL scheme: foreflightmobile://maps/search?q=<tokens joined by +>
+  // Tokens: waypoints in order, then speed (kts), fuel burn (gph), altitude (ft), tail number, ETD in Zulu.
+  function dms(v, w, pos, neg) {
+    const total = Math.round(Math.abs(v) * 3600); // nearest second; carries roll over through minutes and degrees
+    const d = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    return String(d).padStart(w, "0") + String(m).padStart(2, "0") + String(s).padStart(2, "0") + (v >= 0 ? pos : neg);
+  }
+  function foreflightUrl(route, opts) {
+    const o = opts || {};
+    const tokens = [];
+    (route || []).forEach((p) => {
+      if (!p || !isFinite(p.lat) || !isFinite(p.lon)) return;
+      const t = p.type === "AIRPORT" && p.ident ? String(p.ident).toUpperCase() : dms(p.lat, 2, "N", "S") + "/" + dms(p.lon, 3, "E", "W");
+      if (tokens[tokens.length - 1] !== t) tokens.push(t);
+    });
+    const pos = (v) => typeof v === "number" && isFinite(v) && v > 0;
+    if (pos(o.tas)) tokens.push(Math.round(o.tas) + "kts");
+    if (pos(o.ff)) tokens.push(String(Number(o.ff.toFixed(1))) + "gph");
+    if (pos(o.alt)) tokens.push(Math.round(o.alt) + "ft");
+    const reg = alnum(o.reg);
+    if (reg) tokens.push(reg);
+    if (o.etd instanceof Date && !isNaN(o.etd.getTime())) {
+      const e = o.etd, p2 = (n) => String(n).padStart(2, "0");
+      tokens.push(e.getUTCFullYear() + p2(e.getUTCMonth() + 1) + p2(e.getUTCDate()) + "T" + p2(e.getUTCHours()) + ":" + p2(e.getUTCMinutes()) + ":" + p2(e.getUTCSeconds()) + "Z");
+    }
+    return "foreflightmobile://maps/search?q=" + tokens.map((t) => encodeURIComponent(t)).join("+");
+  }
+
+  const OfpPrint = { layout, buildPdf, fpl, foreflightUrl, routeString, MAX_LEGS, LEFT_LEGS, covers, cell, hbox, PAGE_H, PAGE_W };
   if (typeof module !== "undefined" && module.exports) module.exports = OfpPrint;
   else root.OfpPrint = OfpPrint;
 })(typeof window !== "undefined" ? window : globalThis);
