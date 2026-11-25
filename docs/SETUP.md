@@ -7,6 +7,7 @@
 
 ## 2. Create the database schema
 - Dashboard -> SQL Editor -> paste all of `db/schema.sql` -> Run.
+- **OFP builder** (`ofp.html`): the OFP section at the end of the file (tables `ofps` and `waypoints`, `finalize_ofp`, ledger reason `ofp`) is additive and idempotent. On an existing project, re-run the whole file to enable OFPs (3 tokens per flight); the T/O calculator is unaffected. Until it is applied, the admin page simply hides the OFP count and list.
 
 ## 3. Auth settings (Authentication)
 - Sign In / Providers -> turn **off** "Allow new users to sign up". Invites still work.
@@ -38,3 +39,4 @@ Redeploy afterwards. For local dev, export the same three variables in your shel
 3. In the SQL Editor run:
    `update public.profiles set role = 'admin' where email = 'you@example.com';`
 4. Sign in, open `/admin.html`, invite colleagues, and grant them tokens.
+5. To offer shared ATO waypoints, sign in as admin, open `/ofp.html` and place the ATO points on the map (stored as global waypoints; users add their own personal points there too).

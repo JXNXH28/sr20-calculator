@@ -1922,7 +1922,68 @@
     onChange: null,
     refresh: null,
   };
+  // From ofp.html ("Send to T/O sheets"): the handover sits in localStorage under ofp.handoff.
+  function readHandoff() {
+    const h = lsGet("ofp.handoff");
+    try {
+      localStorage.removeItem("ofp.handoff");
+    } catch (e) {
+      /* ignore */
+    }
+    if (!h || typeof h !== "object") return null;
+    const code = (v) => (typeof v === "string" && validCode(v.trim().toUpperCase()) ? v.trim().toUpperCase() : null);
+    const dep = code(h.dep),
+      dest = code(h.dest),
+      tm = /^([01]\d|2[0-3])([0-5]\d)$/.exec(String(h.depTime || "")),
+      n = (v, lo, hi) => (typeof v === "number" && isFinite(v) && v >= lo && v <= hi ? v : null);
+    if (!dep || !dest || dep === dest || !/^\d{4}-\d\d-\d\d$/.test(String(h.date || ""))) return null;
+    const durMin = n(h.durMin, 1, 1440),
+      tripFuel = n(h.tripFuel, 0, 200),
+      takeoffFuel = n(h.takeoffFuel, 0, 200);
+    if (durMin === null || tripFuel === null || takeoffFuel === null) return null;
+    const reg = typeof h.reg === "string" && /^[A-Za-z0-9-]{0,10}$/.test(h.reg.trim()) ? h.reg.trim().toUpperCase() : "";
+    return { dep, dest, date: h.date, time: tm ? `${tm[1]}:${tm[2]}` : "", durMin: Math.round(durMin), tripFuel, takeoffFuel, reg };
+  }
+  async function applyHandoff() {
+    const h = readHandoff();
+    history.replaceState(null, "", location.pathname + location.search.replace(/([?&])from=ofp(&|$)/, (m, a, b) => (b ? a : "")).replace(/\?$/, "") + location.hash);
+    if (!h) return;
+    const flat = { date: h.date, time: h.time, reg: h.reg, fuelTO: h.takeoffFuel };
+    const last = nStops() - 1;
+    const empty = !isRes() && nStops() <= 2 && !stop(0) && !stop(1);
+    let how = "replace";
+    if (!empty) {
+      const canAdd = !isRes() && stop(last) === h.dep;
+      how = await dialog(
+        `<h3 id="{ID}">Add the OFP flight to your route?</h3><p>The OFP flies <b>${esc(h.dep)} → ${esc(h.dest)}</b>.${canAdd ? ` Your route ends at ${esc(h.dep)}, so it can be added as the next leg.` : ` Your current route ${isRes() ? "is a calculated sheet" : "does not end at " + esc(h.dep)}, so it can only replace it.`}</p>
+        <div class="btns"><button type="button" data-v="no">Cancel</button>${canAdd ? '<button type="button" data-v="add">Add as next leg</button>' : ""}<button type="button" class="pri" data-v="replace">Replace route</button></div>`,
+      );
+      if (how !== "replace" && how !== "add") return;
+    }
+    const legKeys = (i) => ({ [`L${i}.dur`]: h.durMin, [`L${i}.trip`]: h.tripFuel });
+    if (how === "add") {
+      const i = last; // the new leg runs from the old last stop to the OFP destination
+      Object.assign(state, { nR: i + 2, ["R" + (i + 1)]: h.dest }, legKeys(i));
+      if (h.reg && !state.reg) state.reg = h.reg;
+      clearFetched();
+    } else if (isRes()) {
+      return loadInputs(Object.assign(blankState(), flat, { nR: 2, R0: h.dep, R1: h.dest }, legKeys(0)), null, false);
+    } else {
+      for (let i = nStops() - 1; i >= 0; i--) delete state["R" + i];
+      Object.keys(state).forEach((k) => /^L\d+\.(dur|trip)$/.test(k) && delete state[k]);
+      Object.assign(state, flat, { nR: 2, R0: h.dep, R1: h.dest }, legKeys(0));
+      clearFetched();
+    }
+    fill($("#steps"));
+    renderRoute();
+    renderLegs();
+    bemNote(regVal());
+    update();
+    changed();
+    toast(`OFP flight ${h.dep} → ${h.dest} loaded`);
+  }
   update();
+  if (/[?&]from=ofp(&|$)/.test(location.search)) applyHandoff();
   window.dispatchEvent(new Event("app-ready")); // autofill.js starts now
   document.body.classList.remove("booting");
   }

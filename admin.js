@@ -96,7 +96,7 @@
   var PERIODS = [['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['90d', 'Last 90 days'], ['custom', 'Custom range…']];
   var VIEWS = ['overview', 'users', 'calcs', 'invite'];
   var state = { view: 'overview', pkey: '30d', pFrom: '', pTo: '', range: null, data: null, loading: false, err: null, seq: 0, cache: {}, uq: '', usort: 'active' };
-  var L = { rows: [], shown: 0, limited: false, dirty: true, touched: false, loading: false, seq: 0, loaded: false };
+  var L = { rows: [], shown: 0, limited: false, dirty: true, touched: false, loading: false, seq: 0, loaded: false, ofps: [], ofpOk: false };
 
   function loadPrefs() {
     try {
@@ -141,6 +141,13 @@
     return '/token_ledger?select=user_id,delta,reason,created_at&created_at=gte.' + encodeURIComponent(from.toISOString()) +
       '&created_at=lt.' + encodeURIComponent(to.toISOString()) + '&limit=10000';
   }
+  // OFPs (table may not exist yet if db/schema.sql was not re-run: callers treat a failure as "none")
+  function ofpUrl(from, to, limit) {
+    return '/ofps?select=id,created_at,updated_at,user_id,flight_date,dep,dest,route,reg&created_at=gte.' + encodeURIComponent(from.toISOString()) +
+      '&created_at=lt.' + encodeURIComponent(to.toISOString()) + '&order=created_at.desc&limit=' + limit;
+  }
+  function optional(p) { return Promise.resolve(p).then(function (r) { return { ok: true, rows: r || [] }; }, function () { return { ok: false, rows: [] }; }); }
+  function reasonLabel(r) { return r === 'ofp' ? 'OFP' : r; }
   function stamp(rows) { (rows || []).forEach(function (r) { r._t = new Date(r.created_at).getTime(); }); return rows || []; }
 
   function load(force) {
@@ -160,12 +167,13 @@
       Auth.rpc('admin_usage', { p_from: r.from.toISOString(), p_to: r.to.toISOString() }),
       Auth.rest(calcUrl(r.pfrom, r.to, 5000)),
       Auth.rest(ledgerUrl(r.pfrom, r.to)),
-      covers ? null : Auth.rest(calcUrl(sf, st, 5000))
+      covers ? null : Auth.rest(calcUrl(sf, st, 5000)),
+      optional(Auth.rest(ofpUrl(r.pfrom, r.to, 5000)))
     ]).then(function (res) {
       if (seq !== state.seq) return;
       var users = res[0] || [], calcs = stamp(res[1]), byId = {};
       users.forEach(function (u) { byId[u.user_id] = u; });
-      var d = { range: r, users: users, byId: byId, calcs: calcs, ledger: stamp(res[2]), truncated: calcs.length >= 5000, dv: null, sp: null };
+      var d = { range: r, users: users, byId: byId, calcs: calcs, ledger: stamp(res[2]), ofpOk: res[4].ok, ofps: stamp(res[4].rows), truncated: calcs.length >= 5000, dv: null, sp: null };
       d.sparkRows = res[3] ? stamp(res[3]) : calcs;
       state.cache[key] = d; state.data = d; state.loading = false;
       afterData();
@@ -197,6 +205,8 @@
     d.calcs.forEach(function (c) {
       if (inRange(c._t, R.from, R.to)) v.cur.push(c); else if (inRange(c._t, R.pfrom, R.pto)) v.prev.push(c);
     });
+    v.ofp = 0; v.pofp = 0;
+    (d.ofps || []).forEach(function (o) { if (inRange(o._t, R.from, R.to)) v.ofp++; else if (inRange(o._t, R.pfrom, R.pto)) v.pofp++; });
     function distinct(rows) { var m = {}; rows.forEach(function (c) { m[c.user_id] = (m[c.user_id] || 0) + 1; }); return m; }
     v.curUsers = distinct(v.cur); v.prevUsers = distinct(v.prev);
     v.active = Object.keys(v.curUsers).length; v.pactive = Object.keys(v.prevUsers).length;
@@ -387,6 +397,7 @@
     if (d.truncated) wrap.appendChild(h('p', { class: 'note', text: 'Calculation data is limited to the latest 5000 rows; figures for the earliest days may be incomplete.' }));
     wrap.appendChild(h('div', { class: 'kpis' }, [
       kpi('Calculations', nf(v.cur.length), '', delta(v.cur.length, v.prev.length), 'Prior: ' + nf(v.prev.length)),
+      d.ofpOk ? kpi('OFPs', nf(v.ofp), '', delta(v.ofp, v.pofp), 'Prior: ' + nf(v.pofp)) : null,
       kpi('Active users', nf(v.active), '/ ' + nf(nUsers), delta(v.active, v.pactive), 'Prior: ' + nf(v.pactive)),
       kpi('Tokens used', nf(v.used), '', delta(v.used, v.pused), 'Prior: ' + nf(v.pused)),
       kpi('Tokens granted', nf(v.granted), '', delta(v.granted, v.pgranted), 'Prior: ' + nf(v.pgranted)),
@@ -655,7 +666,7 @@
       if (!res[1].length) ls.appendChild(empty('No ledger entries')); else ls.appendChild(h('ul', { class: 'hl' }, res[1].map(function (l) {
         var by = l.admin_id ? (names[l.admin_id] || 'admin') : '';
         return h('li', null, [h('span', { class: l.delta > 0 ? 'pos' : 'neg', style: 'min-width:36px', text: (l.delta > 0 ? '+' : '') + l.delta }),
-          h('div', { class: 'g' }, [h('b', { text: l.reason + (l.calculation_id ? ' #' + l.calculation_id : '') }),
+          h('div', { class: 'g' }, [h('b', { text: reasonLabel(l.reason) + (l.calculation_id ? ' #' + l.calculation_id : '') }),
             h('span', { text: rel(l.created_at) + ' · ' + fmtDT(l.created_at) + (by ? ' · by ' + by : '') + (l.note ? ' · ' + l.note : '') })])]);
       })));
       host.appendChild(cs); host.appendChild(ls);
@@ -761,6 +772,10 @@
     if (route) q.push('route=ilike.' + encodeURIComponent('*' + route + '*'));
     if (reg) q.push('reg=eq.' + encodeURIComponent(reg));
     var seq = ++L.seq; L.loading = true; renderLog();
+    var oq = ['select=id,created_at,updated_at,user_id,flight_date,dep,dest,route,reg', 'order=created_at.desc', 'limit=500'];
+    q.forEach(function (x) { if (/^(user_id|created_at)=|^reg=/.test(x)) oq.push(x); });
+    if (route) oq.push('route=ilike.' + encodeURIComponent('*' + route + '*'));
+    optional(Auth.rest('/ofps?' + oq.join('&'))).then(function (o) { if (seq !== L.seq) return; L.ofps = stamp(o.rows); L.ofpOk = o.ok; renderOfps(); });
     Auth.rest('/calculations?' + q.join('&')).then(function (rows) {
       if (seq !== L.seq) return;
       L.rows = stamp(rows); L.shown = Math.min(100, rows.length); L.limited = rows.length >= 2000; L.loading = false; L.loaded = true; renderLog();
@@ -789,6 +804,29 @@
     host.appendChild(h('div', { class: 'tw' }, [h('table', null, [
       h('thead', null, [h('tr', null, ['When', 'User', 'Route', 'Reg', 'Flight', ''].map(function (t) { return h('th', { text: t }); }))]), tb])]));
     if (L.shown < n) host.appendChild(h('div', { class: 'more' }, [h('button', { type: 'button', text: 'Show ' + Math.min(100, n - L.shown) + ' more', onclick: function () { L.shown += 100; renderLog(); } })]));
+  }
+
+  function renderOfps() {
+    var card = $('ofpCard'), host = clear($('olist'));
+    card.hidden = !L.ofpOk;
+    if (!L.ofpOk) return;
+    var rows = L.ofps || [], by = state.data ? state.data.byId : {};
+    $('oCount').textContent = rows.length ? plural(rows.length, 'OFP') + (rows.length >= 500 ? ' (latest 500)' : '') : '';
+    if (!rows.length) { host.appendChild(empty('No OFPs match these filters.')); return; }
+    var tb = h('tbody');
+    rows.forEach(function (o) {
+      var u = by[o.user_id];
+      tb.appendChild(h('tr', null, [
+        h('td', { text: u ? nameOf(u) : o.user_id }),
+        h('td', null, [routeEl(o.route || (o.dep + '-' + o.dest))]),
+        h('td', { text: o.reg || '—' }),
+        h('td', { text: o.flight_date || '—' }),
+        h('td', null, [rel(o.created_at), h('span', { class: 'sub', text: fmtDT(o.created_at) })]),
+        h('td', null, [rel(o.updated_at), h('span', { class: 'sub', text: fmtDT(o.updated_at) })])
+      ]));
+    });
+    host.appendChild(h('div', { class: 'tw' }, [h('table', null, [
+      h('thead', null, [h('tr', null, ['User', 'Route', 'Reg', 'Flight', 'Created', 'Updated'].map(function (t) { return h('th', { text: t }); }))]), tb])]));
   }
 
   // ================================================================ invite
@@ -821,7 +859,7 @@
   // ================================================================ views & init
   function renderView() {
     var v = state.view;
-    if (v === 'overview') renderOverview(); else if (v === 'users') renderUsers(); else if (v === 'calcs') renderLog();
+    if (v === 'overview') renderOverview(); else if (v === 'users') renderUsers(); else if (v === 'calcs') { renderLog(); renderOfps(); }
   }
   function renderAll() { renderView(); }
   function setView(name) {
