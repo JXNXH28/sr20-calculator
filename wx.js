@@ -95,22 +95,23 @@ const hhmm = (sec) => new Date(sec * 1000).toISOString().slice(11, 16) + 'Z';
 
 // Choose the best available weather for time t (unix s).
 // metars: recent METARs (newest data first or any order); taf: single TAF or null; om: Open-Meteo response or null.
-// unit: QNH unit for forecasts ('inHg' | 'hPa'). Returns {wind, temp, qnh} each {…, src} or null.
+// unit: QNH unit for forecasts ('inHg' | 'hPa'). Returns {wind, temp, qnh} each {…, src, at} or null;
+// at = unix s of the METAR observation or TAF issue (what the age shown in the app counts from), absent for model data.
 function pickWeather({ metars, taf, om, t, unit }) {
   const m = nearestMetar(metars, t);
   if (m) {
-    const src = `METAR ${hhmm(m.obsTime)}`, q = altimeter(m.rawOb) || (m.altim ? { v: m.altim, unit: 'hPa' } : null);
+    const src = `METAR ${hhmm(m.obsTime)}`, at = m.obsTime, q = altimeter(m.rawOb) || (m.altim ? { v: m.altim, unit: 'hPa' } : null);
     return {
       raw: m.rawOb,
-      wind: typeof m.wspd === 'number' ? { dir: m.wdir, spd: m.wspd, gst: m.wgst || null, src } : null,
-      temp: typeof m.temp === 'number' ? { v: Math.round(m.temp), src } : null,
-      qnh: q && { ...q, src }
+      wind: typeof m.wspd === 'number' ? { dir: m.wdir, spd: m.wspd, gst: m.wgst || null, src, at } : null,
+      temp: typeof m.temp === 'number' ? { v: Math.round(m.temp), src, at } : null,
+      qnh: q && { ...q, src, at }
     };
   }
   const mode = t > Date.now() / 1000 ? 'forecast' : 'model analysis';
   let wind = null;
   const f = tafAt(taf, t);
-  if (f) wind = { dir: f.wdir, spd: f.wspd, gst: f.wgst || null, src: `TAF issued ${hhmm(Date.parse(taf.issueTime) / 1000)}` };
+  if (f) wind = { dir: f.wdir, spd: f.wspd, gst: f.wgst || null, src: `TAF issued ${hhmm(Date.parse(taf.issueTime) / 1000)}`, at: Date.parse(taf.issueTime) / 1000 || null };
   else {
     const spd = interpHourly(om, 'wind_speed_10m', t), dir = interpHourly(om, 'wind_direction_10m', t, true);
     if (spd !== null && dir !== null) wind = { dir: Math.round(dir), spd: Math.round(spd), gst: gustOrNull(spd, interpHourly(om, 'wind_gusts_10m', t)), src: `model ${mode} (GFS/HRRR)` };
@@ -122,10 +123,10 @@ function pickWeather({ metars, taf, om, t, unit }) {
   // Model unreachable: fall back to the newest METAR and say it is not for the requested time.
   const last = (metars || []).slice().sort((a, b) => b.obsTime - a.obsTime)[0];
   if (last && !(out.wind && out.temp && out.qnh)) {
-    const src = `METAR ${hhmm(last.obsTime)} (not the requested time)`, q = altimeter(last.rawOb);
-    out.wind = out.wind || (typeof last.wspd === 'number' ? { dir: last.wdir, spd: last.wspd, gst: last.wgst || null, src } : null);
-    out.temp = out.temp || (typeof last.temp === 'number' ? { v: Math.round(last.temp), src } : null);
-    out.qnh = out.qnh || (q && { ...q, src });
+    const src = `METAR ${hhmm(last.obsTime)} (not the requested time)`, at = last.obsTime, q = altimeter(last.rawOb);
+    out.wind = out.wind || (typeof last.wspd === 'number' ? { dir: last.wdir, spd: last.wspd, gst: last.wgst || null, src, at } : null);
+    out.temp = out.temp || (typeof last.temp === 'number' ? { v: Math.round(last.temp), src, at } : null);
+    out.qnh = out.qnh || (q && { ...q, src, at });
   }
   return out;
 }
