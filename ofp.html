@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SR20 VFR OFP builder</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<style>
+:root{--bg:#eef1f5;--fg:#16202c;--card:#fff;--line:#c9d1db;--acc:#14305e;--vok:#1e7a46;--vno:#b8321f;--warn:#b9770e;--rt:#c2188a;--pw:min(600px,46vw);--hh:52px}
+@media (prefers-color-scheme:dark){:root{--bg:#161a20;--fg:#e6ebf1;--card:#212832;--line:#38424f;--acc:#7fa6e6;--vok:#5fcf8f;--vno:#ff8a7a;--warn:#e0a84a;--rt:#ff6fc4}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.35 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;gap:8px 12px;align-items:center;padding:8px 16px;background:var(--card);border-bottom:1px solid var(--line);flex:none;min-height:var(--hh)}
+h1{font-size:16px;margin:0;color:var(--acc);flex:1 1 auto}
+.hright{display:flex;gap:8px;align-items:center;margin-left:auto}
+button{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+@media (prefers-color-scheme:dark){button.pri{color:#111}}
+button:disabled{opacity:.5;cursor:default}
+button.sm{padding:3px 9px;font-size:12px}
+a.btn{display:inline-block;text-decoration:none;font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+input[type=text],input[type=number],input[type=date],input:not([type]),input[type=search],select,textarea{font:inherit;padding:5px 7px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--fg);width:100%;min-width:0}
+::placeholder{color:var(--fg);opacity:.4}
+.badge{padding:2px 9px;border-radius:10px;border:1px solid var(--line);font-weight:700;font-variant-numeric:tabular-nums}.badge.low{border-color:#c0392b;color:#c0392b}
+.menu{position:relative}
+#acctBtn{display:flex;align-items:center;gap:6px;padding:3px 10px 3px 4px;border-radius:16px}
+#acctBtn .ini{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--acc);color:#fff;font-size:11px;font-weight:700}
+@media (prefers-color-scheme:dark){#acctBtn .ini{color:#111}}
+#who{font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#acctMenu{position:absolute;right:0;top:calc(100% + 4px);min-width:170px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px #0004;padding:4px;z-index:2000;display:flex;flex-direction:column}
+#acctMenu[hidden]{display:none}
+#acctMenu [role=menuitem]{display:block;text-align:left;padding:8px 12px;border:0;border-radius:5px;background:none;color:var(--fg);text-decoration:none;font:inherit;cursor:pointer}
+#acctMenu [role=menuitem][hidden]{display:none}
+#acctMenu [role=menuitem]:hover,#acctMenu [role=menuitem]:focus-visible{background:var(--bg)}
+body.booting{visibility:hidden}
+.unavail{margin:60px auto;max-width:420px;padding:0 16px;text-align:center;font-size:16px}
+
+/* layout: map + side panel */
+#main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr var(--pw)}
+#mapwrap{position:relative;min-width:0;min-height:0}
+#map{position:absolute;inset:0;z-index:0;isolation:isolate;background:#cfd8e3}
+#msearch{position:absolute;left:52px;top:10px;z-index:900;width:min(320px,calc(100% - 70px))}
+#msearch input{box-shadow:0 1px 6px #0004}
+#qres{list-style:none;margin:2px 0 0;padding:0;background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:0 3px 10px #0004;max-height:260px;overflow:auto}
+#qres:empty{display:none}
+#qres li button{display:flex;width:100%;gap:8px;border:0;border-radius:0;text-align:left;padding:6px 10px;font-size:13px}
+#qres li button:hover,#qres li button:focus-visible{background:var(--bg)}
+#qres small{opacity:.7;margin-left:auto}
+#mapctl{position:absolute;right:10px;top:10px;z-index:900;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 6px #0004;font-size:12px;max-width:190px}
+#mapctl .seg{display:flex}
+#mapctl .seg button{flex:1;border:0;border-radius:0;padding:5px 8px;font-size:12px;border-right:1px solid var(--line)}
+#mapctl .seg button:last-child{border-right:0}
+#mapctl .seg button[aria-pressed=true]{background:var(--acc);color:#fff}
+@media (prefers-color-scheme:dark){#mapctl .seg button[aria-pressed=true]{color:#111}}
+#mapctl summary{padding:5px 8px;cursor:pointer;border-top:1px solid var(--line)}
+#mapctl .lays{padding:2px 8px 6px;display:flex;flex-direction:column;gap:2px}
+#mapctl label{display:flex;gap:6px;align-items:center}
+#mhint{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:900;background:var(--acc);color:#fff;padding:6px 14px;border-radius:16px;font-size:13px;box-shadow:0 2px 8px #0004;max-width:90%;text-align:center}
+@media (prefers-color-scheme:dark){#mhint{color:#111}}
+#mhint[hidden]{display:none}
+#map.placing{cursor:crosshair}
+#panel{background:var(--bg);border-left:1px solid var(--line);min-height:0;display:flex;flex-direction:column}
+#grip{display:none}
+#pbody{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px;flex:1 1 auto;min-height:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px}
+.card>summary{padding:8px 12px;cursor:pointer;font-weight:700;font-size:14px}
+.card>.in{padding:2px 12px 12px}
+.fg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.fg label{display:flex;flex-direction:column;gap:2px;font-size:11px;min-width:0}
+.fg .w2{grid-column:span 2}.fg .w3{grid-column:span 3}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:end}
+.row>label{flex:1 1 120px;display:flex;flex-direction:column;gap:2px;font-size:11px}
+.note{font-size:12px;opacity:.85}.fine{font-size:11px;opacity:.7}
+.err{color:var(--vno)}.warnc{color:var(--warn)}.okc{color:var(--vok)}
+/* leg table */
+#legwrap{overflow-x:auto}
+table.legs{border-collapse:collapse;width:100%;min-width:540px;font-size:12px;font-variant-numeric:tabular-nums}
+table.legs th{font-size:10px;text-transform:uppercase;letter-spacing:.03em;opacity:.7;text-align:center;padding:2px 3px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.legs td{padding:3px;border-bottom:1px solid var(--line);vertical-align:top;text-align:center}
+table.legs td.wp{text-align:left;min-width:92px}
+table.legs tr.cur td{background:color-mix(in srgb,var(--acc) 12%,transparent)}
+table.legs tr.bad td{background:color-mix(in srgb,var(--vno) 12%,transparent)}
+table.legs tr.from td{background:var(--bg);font-weight:700;text-align:left}
+table.legs tr.tot td{font-weight:700;border-top:2px solid var(--line)}
+.cell{display:flex;flex-direction:column;gap:2px;align-items:center}
+.chip{padding:1px 5px;min-width:40px;font:inherit;font-size:12px;border:1px solid transparent;border-radius:4px;background:none;color:var(--fg);cursor:help;font-variant-numeric:tabular-nums}
+.chip:hover,.chip:focus-visible{border-color:var(--line);background:var(--bg)}
+.chip.na{opacity:.4}
+.chip.e{color:var(--vno);font-weight:700}
+table.legs input{width:62px;padding:2px 4px;font-size:12px;text-align:center}
+table.legs input.auto{font-style:italic;opacity:.8}
+table.legs input.wnd{width:58px}
+.wn{font-weight:700;font-size:13px;display:flex;gap:4px;align-items:center}
+.wn .n{display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:9px;background:var(--rt);color:#fff;font-size:10px;padding:0 3px}
+.wn small{font-weight:400;opacity:.7}
+.x{border:0;background:none;padding:0 4px;opacity:.5;font-size:15px;line-height:1}
+.tag{font-size:9px;opacity:.75}
+.tag.auto{color:var(--warn)}
+#legs .nowind .wcol{display:none}
+.nowc .wcol{display:none}
+#checks{display:flex;flex-direction:column;gap:3px;font-size:12px}
+#checks .ck{display:flex;gap:6px;text-align:left;border:0;background:none;padding:3px 4px;border-radius:5px;cursor:pointer;color:var(--fg)}
+#checks .ck:hover{background:var(--bg)}
+#checks .ck b{flex:none;min-width:40px;font-weight:600;opacity:.8}
+#checks .ck.warn::before{content:"\25B2";color:var(--warn)}
+#checks .ck.err::before{content:"\25CF";color:var(--vno)}
+#checks .ck.info::before{content:"\25CB";opacity:.7}
+#checks .grp{font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.65;margin-top:4px}
+#checks .ok{color:var(--vok)}
+#autochecks:empty{display:none}
+.acts{display:flex;flex-wrap:wrap;gap:6px}
+.acts button{padding:6px 12px;font-size:13px}
+#atoList{display:flex;flex-direction:column;gap:2px;max-height:240px;overflow:auto}
+#atoList button{display:flex;gap:8px;text-align:left;border-radius:5px;padding:4px 8px;font-size:12px;width:100%}
+#atoList button.sel{border-color:var(--acc);background:var(--bg)}
+#atoList small{margin-left:auto;opacity:.75}
+/* map decorations */
+.vtx{display:grid;place-items:center;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:var(--rt);color:#fff;font:700 11px/1 -apple-system,Segoe UI,Arial,sans-serif;border:2px solid #fff;box-shadow:0 1px 4px #0007}
+.vtx.apt{border-radius:5px;background:#0b3d91}
+.vtx.proc{background:#6b2fb3}
+.vtx.cur{outline:3px solid #ffd400}
+.midh{width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:#fff;border:2px solid var(--rt);box-shadow:0 1px 3px #0006;cursor:grab}
+.legLbl{background:#fffd;color:#111;border:1px solid #0004;border-radius:4px;padding:0 4px;font:600 11px/16px -apple-system,Segoe UI,Arial,sans-serif;white-space:nowrap;margin:-26px 0 0 -48px;pointer-events:none}
+.legLbl.e{background:#ffd9d4;border-color:#b8321f}
+.lbl{background:#fffe;border:1px solid #0003;color:#111;font-size:10px;padding:0 3px;box-shadow:none}
+.lbl.leaflet-tooltip-right::before{display:none}
+.zlow .lbl{display:none}
+.leaflet-container{font:inherit}
+.rubber{background:#fffe;color:#111;border:1px solid #0005;font-weight:600;font-size:11px;padding:0 4px}
+.popbtns{display:flex;flex-direction:column;gap:4px;min-width:140px}
+.popbtns b{font-size:13px}
+.popbtns button{padding:4px 8px;font-size:12px;color:#111;background:#fff}
+/* dialogs, how, toast */
+dialog{max-width:min(620px,calc(100vw - 24px));width:100%;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);padding:16px}
+dialog::backdrop{background:#0006}
+dialog h3{margin:0 0 8px;font-size:15px}dialog ul{padding-left:18px;margin:6px 0}dialog li{margin:3px 0}
+dialog .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
+dialog label{display:flex;flex-direction:column;gap:2px;font-size:12px;margin:6px 0}
+dialog.pdf{max-width:min(900px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto}
+dialog.pdf canvas{width:100%;height:auto;background:#fff;box-shadow:0 2px 10px #0003;display:block;margin:6px 0}
+.hist{list-style:none!important;padding:0!important;max-height:60vh;overflow:auto}
+.hist li{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;border-top:1px solid var(--line);padding:6px 0}
+.hist .hbtn{display:flex;gap:6px;flex-wrap:wrap}.hist .hbtn button{padding:4px 10px;font-size:12px}
+.hist .hmeta{flex:1 1 220px;font-size:12px}.hist .hmeta b{font-size:13px}
+#how{position:fixed;z-index:3000;max-width:min(320px,calc(100vw - 16px));background:var(--acc);color:#fff;padding:6px 10px;border-radius:8px;font-size:12px;box-shadow:0 3px 12px #0006}
+@media (prefers-color-scheme:dark){#how{color:#111}}
+#how[hidden]{display:none}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--acc);color:#fff;padding:8px 16px;border-radius:18px;font-size:13px;z-index:3100;box-shadow:0 2px 10px #0004;max-width:92vw}
+#toast[hidden]{display:none}
+@media (prefers-color-scheme:dark){#toast{color:#111}}
+/* phone: panel is a bottom sheet over the map */
+@media (max-width:900px){
+ #main{display:block;position:relative}
+ #mapwrap{position:absolute;inset:0}
+ #panel{position:absolute;left:0;right:0;bottom:0;z-index:1500;border-left:0;border-top:1px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 -3px 14px #0005;height:var(--sh);transition:height .18s ease}
+ #panel[data-sheet=peek]{--sh:92px}#panel[data-sheet=half]{--sh:52%}#panel[data-sheet=full]{--sh:calc(100% - 4px)}
+ #grip{display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;border:0;border-radius:14px 14px 0 0;padding:6px 12px 8px;background:var(--card);flex:none;touch-action:none}
+ #grip .bar{width:40px;height:4px;border-radius:2px;background:var(--line)}
+ #sum{font-size:13px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ #mapctl{top:10px;max-width:150px}
+ #mhint{bottom:104px}
+ #panel[data-sheet=peek] #pbody{overflow:hidden}
+ #toast{bottom:110px}
+ .fg{grid-template-columns:repeat(2,1fr)}.fg .w3{grid-column:span 2}
+ #who{display:none}
+}
+@media (max-width:600px){#who{display:none}#acctBtn{padding-right:6px}#toLink{display:none}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}header{padding:6px 10px}#newBtn{padding:6px 10px}}
+</style>
+</head>
+<body class="booting">
+<header>
+  <h1>SR20 · VFR OFP builder</h1>
+  <div class="hright">
+    <a class="btn" href="/" id="toLink" title="Go to the T/O data sheets">T/O sheets</a>
+    <button id="newBtn" type="button" title="Start a new, empty flight plan">New OFP</button>
+    <span id="tokens" class="badge" title="Calculation tokens left (an OFP costs 3)" aria-live="polite"></span>
+    <div class="menu">
+      <button id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="acctMenu"><span class="ini" id="ini" aria-hidden="true"></span><span id="who"></span><span aria-hidden="true">▾</span></button>
+      <div id="acctMenu" role="menu" aria-label="Account" hidden>
+        <button id="histBtn" type="button" role="menuitem" tabindex="-1">OFP history</button>
+        <a href="/" role="menuitem" tabindex="-1">T/O sheets</a>
+        <a id="adminLink" href="/admin.html" role="menuitem" tabindex="-1" hidden>Admin</a>
+        <button id="signout" type="button" role="menuitem" tabindex="-1">Sign out</button>
+      </div>
+    </div>
+  </div>
+</header>
+<div id="main">
+  <section id="mapwrap" aria-label="Map">
+    <div id="map"></div>
+    <div id="msearch"><input id="q" type="search" placeholder="Search airport, point or ident…" autocomplete="off" aria-label="Search points"><ul id="qres"></ul></div>
+    <div id="mapctl">
+      <div class="seg" role="group" aria-label="Chart"><button type="button" data-base="auto" aria-pressed="true" title="TAC when zoomed in, sectional when zoomed out">Auto</button><button type="button" data-base="tac" aria-pressed="false">TAC</button><button type="button" data-base="sect" aria-pressed="false">Sect</button></div>
+      <details><summary>Layers</summary><div class="lays" id="lays"></div></details>
+    </div>
+    <div id="mhint" hidden></div>
+  </section>
+  <aside id="panel" data-sheet="half" aria-label="Flight plan">
+    <button id="grip" type="button" aria-label="Resize the plan panel"><span class="bar"></span><span id="sum">OFP</span></button>
+    <div id="pbody">
+      <details class="card" open id="secFlight"><summary>Flight</summary><div class="in">
+        <div class="fg">
+          <label>Date<input type="date" data-k="date"></label>
+          <label>Off block (HHMM)<input type="text" inputmode="numeric" maxlength="4" data-k="offBlock" placeholder="0950"></label>
+          <label>T/O time (HHMM)<input type="text" inputmode="numeric" maxlength="4" data-k="toTime" placeholder="1000"></label>
+          <label>Block time (min)<input type="number" min="0" step="1" data-k="blockMin" placeholder="auto"></label>
+          <label>Reg<input type="text" list="fleet" data-k="reg" placeholder="N402AV" autocapitalize="characters"><datalist id="fleet"></datalist></label>
+          <label>Callsign<input type="text" data-k="callsign" maxlength="10"></label>
+          <label>Mission<input type="text" data-k="mission" maxlength="14"></label>
+          <label>Solo / dual<select data-k="solo" data-t="bool"><option value="1">Solo</option><option value="0">Dual</option></select></label>
+          <label>Day / night<select data-k="night" data-t="bool"><option value="0">Day</option><option value="1">Night</option></select></label>
+          <label>Crew 1<input type="text" data-k="crew.0" maxlength="14"></label>
+          <label>Crew 2<input type="text" data-k="crew.1" maxlength="14"></label>
+          <label>Crew 3<input type="text" data-k="crew.2" maxlength="14"></label>
+          <label>Takeoff fuel (USG)<input type="number" min="0" max="60" step="0.1" data-k="takeoffFuel" data-t="num"></label>
+          <label>Power (%)<input type="number" min="50" max="100" step="1" data-k="pwr" data-t="num"></label>
+          <label>ISA dev (°C)<input type="number" min="-30" max="30" step="1" data-k="isaDev" data-t="num"></label>
+          <label>Wind<select data-k="windMode"><option value="single">One MAG W/V</option><option value="leg">Per leg</option><option value="auto">Auto (forecast)</option></select></label>
+          <label class="wcol1">MAG wind from<input type="number" min="0" max="360" step="1" data-k="wind.dir" data-t="num" placeholder="270"></label>
+          <label class="wcol1">Wind speed (kt)<input type="number" min="0" max="99" step="1" data-k="wind.spd" data-t="num" placeholder="10"></label>
+          <label class="w3">Notes (printed in the Notes box)<input type="text" data-k="notes" maxlength="140"></label>
+        </div>
+        <p class="note" id="windnote"></p>
+      </div></details>
+      <details class="card" open id="secRoute"><summary>Route</summary><div class="in">
+        <div class="row">
+          <label>From<input type="text" list="aptlist" id="hDep" placeholder="KGYR" autocapitalize="characters"></label>
+          <label>To<input type="text" list="aptlist" id="hDest" placeholder="KGYR" autocapitalize="characters"></label>
+          <datalist id="aptlist"></datalist>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <label>Departure procedure<select id="depProc"></select></label>
+          <label>Arrival procedure<select id="arrProc"></select></label>
+        </div>
+        <p class="note" id="routeNote"></p>
+        <p class="note">Click the map to add points (snaps to library points within 12 px). Drag a point to move it, drag a leg's white dot to insert one. Tap a point for rename, save and delete.</p>
+        <div class="acts"><button type="button" class="sm" id="clearRoute">Clear points</button><button type="button" class="sm" id="reverseBtn">Return flight</button></div>
+      </div></details>
+      <details class="card" open id="secLegs"><summary>Legs</summary><div class="in">
+        <div id="legwrap"><div id="legs"></div></div>
+        <p class="fine">Tap any computed number to see how it was worked out. Courses and winds are magnetic. B02 rules: whole NM, EET rounded up.</p>
+      </div></details>
+      <details class="card" open id="secChecks"><summary>Checks</summary><div class="in">
+        <div id="checks" aria-live="polite"></div>
+        <div id="autochecks" data-hook="safety-checks"></div>
+      </div></details>
+      <details class="card" open id="secActions"><summary>Finalise and output</summary><div class="in">
+        <p class="note" id="finNote"></p>
+        <div class="acts" id="finActs">
+          <button type="button" class="pri" id="finBtn">Finalise (3 tokens)</button>
+        </div>
+        <div class="acts" id="outActs" style="margin-top:8px">
+          <button type="button" data-out="preview">Preview PDF</button>
+          <button type="button" data-out="print">Open to print</button>
+          <button type="button" data-out="download">Download PDF</button>
+          <button type="button" data-out="fpl">ForeFlight .fpl</button>
+          <button type="button" data-out="copy">Copy route</button>
+          <button type="button" data-out="send">Send to T/O sheets</button>
+        </div>
+      </div></details>
+      <details class="card" id="secAto" hidden><summary>ATO points (admin)</summary><div class="in">
+        <p class="note">Click a name, then click the map to place it. Placed points can be dragged on the map.</p>
+        <div id="atoList"></div>
+      </div></details>
+      <p class="fine"><b>Training aid only.</b> Verify every value against B02, the POH and the chart before flight. Automatic MSA, airspace and glide values (when shown) must be verified on the chart. Charts: FAA VFR Terminal and Sectional tiles.</p>
+    </div>
+  </aside>
+</div>
+<div id="how" hidden role="status"></div>
+<div id="toast" role="status" hidden></div>
+<script src="/api/config.js"></script>
+<script src="/auth.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf.worker.min.js"></script>
+<script src="fleet.js"></script>
+<script src="airports.js"></script>
+<script src="perf.js"></script>
+<script src="wx.js"></script>
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/wmm.js"></script>
+<script src="nav.js"></script>
+<script src="ato.js"></script>
+<script src="ofpform.js"></script>
+<script src="ofpprint.js"></script>
+<!-- step 3 (OfpData / Safety) loads here, before ofp.js: <script src="ofpdata.js"></script><script src="safety.js"></script> -->
+<script src="ofp.js"></script>
+</body>
+</html>
