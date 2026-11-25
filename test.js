@@ -211,6 +211,70 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
 }
 // ==== end ato ====
 // ==== print tests (OFP) ====
+{
+  const OP = require('./ofpprint.js');
+  const mkRow = (i, o) => Object.assign({ name: 'PT' + i, ident: 'PT' + i, lat: 33.4, lon: -112.5, alt: 5500, msa: 6000, mc: 90 + i, dist: 12.3, wdir: 250, wspd: 10, tas: 100, ff: 12.7,
+    wca: -4, gs: 105, eet: 7, pto: '1013', legFuel: 1.5, plFuel: 50.0, minFuel: 20.1, fixed: null, pattern: null }, o || {});
+  const mkLog = (n) => ({ rows: Array.from({ length: n }, (_, i) => mkRow(i)), totals: { eet: 49, trip: 10.5 } });
+  const hdr = { from: 'KGYR', to: 'KE63', offBlock: '1000', onBlock: '1130', toTime: '1006', callsign: 'N123AB', reg: 'N123AB', cruiseFf: 12.7, magWind: '250/10', alt: '5500', date: '26 Apr 2025',
+    mission: 'NAV', crew: ['Smith', 'Jones'], takeoffFuel: 54.5, notes: ['Verify MSA on chart', 'Wx: CAVOK'] };
+  const inBox = (it, b) => it.x >= b.x0 - 0.01 && it.x + it.text.length * it.size * 0.5 <= b.x1 + 0.01 && it.y >= b.y0 && it.y + it.size * 0.7 <= b.y1 + 0.5;
+  const L1 = OP.layout(mkLog(7), hdr);
+  const e1 = L1.find((it) => it.text === ':07');
+  const b1 = OP.cell('left', 0, 'eet', 0);
+  console.log((e1 && inBox(e1, b1) ? 'ok   ' : 'FAIL ') + 'leg1 EET inside left EET cell'); if (!(e1 && inBox(e1, b1))) fail++;
+  // 19 legs -> 18 placed; leg 12 is the first on the right ladder
+  const L18 = OP.layout(mkLog(19), hdr);
+  const wpts = L18.filter((it) => /^PT\d+$/.test(it.text)).map((it) => it.text);
+  eq('19-leg log places 18 legs', wpts.length, 18, 0);
+  eq('leg 11 still left', L18.find((it) => it.text === 'PT10').x < 396 ? 1 : 0, 1, 0);
+  eq('leg 12 is on the right ladder', L18.find((it) => it.text === 'PT11').x > 396 ? 1 : 0, 1, 0);
+  eq('no ETO ever printed', L18.filter((it) => it.text === '1013' && it.x > 192.9 && it.x < 227.8 && it.y > 400).length, 0, 0);
+  // fixed first leg: Dep in MC, no WCA/GS, only MC XXX covered; non-fixed: all four covered, MC printed
+  const fx = { rows: [mkRow(0, { name: 'PIR', fixed: { min: 5, nm: 5 }, eet: 5, dist: 5 })], totals: { eet: 5, trip: 1 } };
+  const Lf = OP.layout(fx, hdr);
+  eq('fixed leg prints Dep', Lf.filter((it) => it.text === 'Dep').length, 1, 0);
+  eq('fixed leg: no GS/WCA text', Lf.filter((it) => it.text === '105' || it.text === '-4').length, 0, 0);
+  eq('fixed leg covers', OP.covers(fx).join() === '0,4,5' ? 1 : 0, 1, 0);
+  eq('non-fixed leg covers all XXX', OP.covers(mkLog(2)).join() === '0,1,2,3,4,5' ? 1 : 0, 1, 0);
+  eq('non-fixed leg prints GS and WCA', OP.layout(mkLog(2), hdr).filter((it) => it.text === '105' || it.text === '-4').length >= 2 ? 1 : 0, 1, 0);
+  // long name truncated to the cell
+  const LL = OP.layout({ rows: [mkRow(0, { name: 'A'.repeat(30), ident: 'A'.repeat(30) })], totals: { eet: 7, trip: 1.5 } }, hdr);
+  const ln = LL.find((it) => /^A+$/.test(it.text));
+  eq('long WPT name fits cell', ln.text.length * ln.size * 0.5 <= OP.cell('left', 0, 'wpt', 0).x1 - OP.cell('left', 0, 'wpt', 0).x0 ? 1 : 0, 1, 0);
+  console.log((ln.text.length < 30 ? 'ok   ' : 'FAIL ') + 'long WPT name truncated'); if (ln.text.length >= 30) fail++;
+  // wind error leg and non-finite values: never NaN/undefined
+  const bad = { rows: [mkRow(0, { error: 'wind', gs: NaN, wca: undefined, eet: NaN, legFuel: NaN, plFuel: NaN, minFuel: NaN, pto: undefined, dist: Infinity }), mkRow(1, { mc: NaN, alt: undefined, msa: null })], totals: { eet: NaN, trip: NaN } };
+  const hb = Object.assign({}, hdr, { cruiseFf: NaN, takeoffFuel: undefined, magWind: 'NaN/undefined' });
+  const bad_it = OP.layout(bad, hb).filter((it) => /NaN|undefined|Infinity/.test(it.text));
+  eq('no NaN/undefined text items', bad_it.length, 0, 0);
+  const nan_it = L18.filter((it) => /NaN|undefined/.test(it.text));
+  eq('no NaN/undefined in normal log', nan_it.length, 0, 0);
+  eq('remarks T&G', OP.layout({ rows: [mkRow(0, { pattern: { touchGo: 3, taxiBack: 0, fullStop: true, airwork: 20 } })], totals: {} }, hdr).filter((it) => /T&G \(3\)|AIRWORK|Full stop/.test(it.text)).length >= 2 ? 1 : 0, 1, 0);
+  // fpl
+  const xml = OP.fpl([
+    { name: 'KGYR', ident: 'KGYR', lat: 33.4231, lon: -112.676, type: 'AIRPORT' },
+    { name: 'Sun Valley Rd', ident: '', lat: 33.35, lon: -112.5333, type: 'USER WAYPOINT' },
+    { name: 'KE63', ident: 'KE63', lat: 33.3, lon: -112.0, type: 'AIRPORT' },
+  ]);
+  eq('fpl waypoint count', (xml.match(/<waypoint>/g) || []).length, 3, 0);
+  eq('fpl route-point count', (xml.match(/<route-point>/g) || []).length, 3, 0);
+  console.log((xml.includes('xmlns="http://www8.garmin.com/xmlschemas/FlightPlan/v1"') ? 'ok   ' : 'FAIL ') + 'fpl namespace'); if (!xml.includes('FlightPlan/v1')) fail++;
+  const uid = (xml.match(/<identifier>([^<]*)<\/identifier>/g) || [])[1].replace(/<[^>]+>/g, '');
+  eq('fpl user id <= 6 chars', uid.length <= 6 && /^[A-Z0-9]+$/.test(uid) ? 1 : 0, 1, 0);
+  // two user points with colliding ids stay unique
+  const x2 = OP.fpl([{ name: 'Sun Valley A', lat: 33.1, lon: -112.1, type: 'USER WAYPOINT' }, { name: 'Sun Valley B', lat: 33.2, lon: -112.2, type: 'USER WAYPOINT' }]);
+  const ids2 = (x2.match(/<identifier>([^<]*)<\/identifier>/g) || []);
+  eq('colliding user ids unique', new Set(ids2).size, 2, 0);
+  console.log((OP.routeString([{ ident: 'KGYR', type: 'AIRPORT', lat: 33.4, lon: -112.7 }, { lat: 33.35, lon: -112.5333, type: 'USER WAYPOINT' }, { ident: 'KE63', type: 'AIRPORT', lat: 33.3, lon: -112 }]) === 'KGYR 3321N/11232W KE63' ? 'ok   ' : 'FAIL ') + 'routeString'); 
+  if (OP.routeString([{ lat: 33.35, lon: -112.5333, type: 'USER WAYPOINT' }]) !== '3321N/11232W') fail++;
+}
+// PDF build is async and test.js exits synchronously, so run it in a child process
+{
+  const out = require('child_process').execFileSync(process.execPath, ['-e', "require('./ofpprint.js').buildPdf({ rows: [{ name: 'KGYR', alt: 2700, msa: 3000, mc: 90, dist: 10, wca: 0, gs: 100, eet: 6, pto: '1012', legFuel: 1.2, plFuel: 53.3, minFuel: 10, pattern: { touchGo: 3 } }], totals: { eet: 6, trip: 1.2 } }, { from: 'KGYR', to: 'KGYR' }).then((b) => console.log(b.length + ' ' + Buffer.from(b.slice(0, 4)).toString()))"], { cwd: __dirname }).toString().trim().split(' ');
+  const ok = +out[0] > 10000 && out[1] === '%PDF';
+  console.log((ok ? 'ok   ' : 'FAIL ') + 'OFP buildPdf bytes ' + out.join(' ')); if (!ok) fail++;
+}
 // ==== end print ====
 // ==== safety tests (OFP) ====
 // ==== end safety ====
