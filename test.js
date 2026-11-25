@@ -444,6 +444,87 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   streq('ff url collapses consecutive duplicates', OPF.foreflightUrl([kgyr, kgyr, e63, e63, kgyr], {}), P + 'KGYR+E63+KGYR');
 }
 // ==== end ffurl ====
+// ==== tfrxml tests (OFP) ====
+{
+  const { parseTfrXml, parseLatLon } = require('./lib/tfrxml.js');
+  const awv = require('./api/aw/[ep].js').validate;
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  // trimmed from FAA detail_6_9784.xml (circle) and detail_6_9736.xml (polygon with a CWA arc, pre-expanded in abdMergedArea)
+  const CIRCLE = `<XNOTAM-Update><Group><Add><Not><NotUid><dateIndexYear>2026</dateIndexYear><noSeqNo>9784</noSeqNo></NotUid>
+    <dateEffective>2026-11-25T19:11:00</dateEffective><dateExpire>2026-11-25T23:30:00</dateExpire>
+    <AffLocGroup><txtNameCity>Goldsboro</txtNameCity><txtNameUSState>NORTH CAROLINA</txtNameUSState></AffLocGroup>
+    <TfrNot><TFRAreaGroup><aseTFRArea><txtName>Area A</txtName>
+      <codeDistVerUpper>HEI</codeDistVerUpper><valDistVerUpper>1000</valDistVerUpper><uomDistVerUpper>FT</uomDistVerUpper>
+      <codeDistVerLower>HEI</codeDistVerLower><valDistVerLower>0</valDistVerLower><uomDistVerLower>FT</uomDistVerLower></aseTFRArea>
+    <abdMergedArea><Avx><codeType>GRC</codeType><geoLat>35.42166667N</geoLat><geoLong>078.05638889W</geoLong></Avx>
+      <Avx><codeType>GRC</codeType><geoLat>35.41166667N</geoLat><geoLong>078.03888889W</geoLong></Avx>
+      <Avx><codeType>GRC</codeType><geoLat>35.40166667N</geoLat><geoLong>078.05638889W</geoLong></Avx></abdMergedArea>
+    <aseShapes><Abd><Avx><codeType>CIR</codeType><geoLat>35.41166667N</geoLat><geoLong>078.05638889W</geoLong><codeDatum>WGE</codeDatum>
+      <valRadiusArc>1.0</valRadiusArc><uomRadiusArc>NM</uomRadiusArc></Avx></Abd></aseShapes></TFRAreaGroup></TfrNot>
+    <txtDescrUSNS>!FDC 6/9784 ZDC NC..AIRSPACE GOLDSBORO, NC..TEMPORARY FLIGHT RESTRICTIONS. WI AN AREA DEFINED AS 1NM RADIUS OF 352442N0780323W SFC-1000FT AGL</txtDescrUSNS>
+    </Not></Add></Group></XNOTAM-Update>`;
+  const POLY = `<XNOTAM-Update><Group><Add><Not><NotUid><dateIndexYear>2026</dateIndexYear><noSeqNo>9736</noSeqNo></NotUid>
+    <dateEffective>2026-11-29T13:00:00</dateEffective><dateExpire>2026-11-30T06:00:00</dateExpire>
+    <AffLocGroup><txtNameCity>Libby AAF</txtNameCity></AffLocGroup>
+    <TfrNot><TFRAreaGroup><aseTFRArea><txtName>Area A</txtName>
+      <codeDistVerUpper>ALT</codeDistVerUpper><valDistVerUpper>17999</valDistVerUpper><uomDistVerUpper>FT</uomDistVerUpper>
+      <codeDistVerLower>ALT</codeDistVerLower><valDistVerLower>9000</valDistVerLower><uomDistVerLower>FT</uomDistVerLower></aseTFRArea>
+    <abdMergedArea><Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.56805556N</geoLat><geoLong>110.19333333W</geoLong></Avx>
+      <Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.58694444N</geoLat><geoLong>110.50555556W</geoLong></Avx>
+      <Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.59850202N</geoLat><geoLong>110.50360473W</geoLong></Avx>
+      <Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.56805556N</geoLat><geoLong>110.19333333W</geoLong></Avx></abdMergedArea>
+    <aseShapes><Abd><Avx><codeType>GRC</codeType><geoLat>31.56805556N</geoLat><geoLong>110.19333333W</geoLong></Avx>
+      <Avx><codeType>GRC</codeType><geoLat>31.58694444N</geoLat><geoLong>110.50555556W</geoLong></Avx>
+      <Avx><codeType>CWA</codeType><geoLatArc>31.5775N</geoLatArc><geoLongArc>110.34944444W</geoLongArc><valRadiusArc>8.0</valRadiusArc><uomRadiusArc>NM</uomRadiusArc></Avx></Abd></aseShapes>
+    </TFRAreaGroup></TfrNot></Not></Add></Group></XNOTAM-Update>`;
+  tst('parseLatLon N', parseLatLon('33.5N') === 33.5);
+  tst('parseLatLon W', parseLatLon('112.25W') === -112.25);
+  tst('parseLatLon padded W', parseLatLon('079.79166667W') === -79.79166667);
+  tst('parseLatLon S', parseLatLon('12.5S') === -12.5);
+  tst('parseLatLon bad', isNaN(parseLatLon('abc')));
+  const c = parseTfrXml(CIRCLE, { notamId: '6/9784', state: 'NC', description: 'Goldsboro, NC', type: 'SECURITY' });
+  tst('circle parsed', c && c.shapes.length === 1 && c.shapes[0].kind === 'circle', JSON.stringify(c));
+  if (c) {
+    tst('circle center', near(c.shapes[0].lat, 35.41166667) && near(c.shapes[0].lon, -78.05638889), JSON.stringify(c.shapes[0]));
+    tst('circle radius NM', c.shapes[0].radiusNm === 1);
+    tst('circle alt SFC-1000 AGL', c.floorFt === 0 && c.ceilFt === 1000 && c.agl === true, JSON.stringify([c.floorFt, c.ceilFt, c.agl]));
+    tst('circle times (UTC)', c.from === '2026-11-25T19:11:00Z' && c.to === '2026-11-25T23:30:00Z', c.from + ' ' + c.to);
+    tst('circle meta', c.id === '6/9784' && c.state === 'NC' && c.type === 'SECURITY' && c.name === 'Goldsboro' && /GOLDSBORO/.test(c.text) && c.text.length <= 300);
+  }
+  const p = parseTfrXml(POLY, { notamId: '6/9736', state: 'AZ' });
+  tst('poly parsed', p && p.shapes.length === 1 && p.shapes[0].kind === 'poly' && p.shapes[0].pts.length === 4, JSON.stringify(p));
+  if (p) {
+    tst('poly vertex sign/decimals', near(p.shapes[0].pts[0][0], 31.56805556) && near(p.shapes[0].pts[0][1], -110.19333333) && near(p.shapes[0].pts[1][1], -110.50555556));
+    tst('poly alt MSL', p.floorFt === 9000 && p.ceilFt === 17999 && !p.agl);
+    tst('poly times', p.from === '2026-11-29T13:00:00Z' && p.to === '2026-11-30T06:00:00Z');
+  }
+  // arc fallback: no merged outline, CWA arc expanded to points every ~10 degrees
+  const arc = parseTfrXml(POLY.replace(/<abdMergedArea>[\s\S]*<\/abdMergedArea>/, ''), {});
+  tst('arc fallback adds points', arc && arc.shapes[0].kind === 'poly' && arc.shapes[0].pts.length > 4, arc && arc.shapes[0].pts.length);
+  if (arc) {
+    const d = pt => Math.hypot((pt[0] - 31.5775) * 60, (pt[1] + 110.34944444) * 60 * Math.cos(31.5775 * Math.PI / 180));
+    tst('arc points on 8 NM radius', arc.shapes[0].pts.slice(2).every(pt => Math.abs(d(pt) - 8) < 0.3), JSON.stringify(arc.shapes[0].pts.slice(2).map(d)));
+  }
+  const fl = parseTfrXml(POLY.replace('<valDistVerUpper>17999</valDistVerUpper><uomDistVerUpper>FT', '<valDistVerUpper>180</valDistVerUpper><uomDistVerUpper>FL'), {});
+  tst('FL x100', fl && fl.ceilFt === 18000);
+  tst('garbage -> null', parseTfrXml('hello') === null && parseTfrXml('') === null && parseTfrXml(null) === null && parseTfrXml(undefined) === null && parseTfrXml(42) === null);
+  tst('no geometry -> null', parseTfrXml('<XNOTAM-Update><TFRAreaGroup><aseTFRArea></aseTFRArea></TFRAreaGroup>' + ' '.repeat(60) + '</XNOTAM-Update>') === null);
+  // aw relay param validation
+  const V = (ep, qs) => awv(ep, new URLSearchParams(qs));
+  tst('aw metar ok', V('metar', 'ids=ksef&hours=3').toString() === 'ids=KSEF&hours=3&format=json', String(V('metar', 'ids=ksef&hours=3')));
+  tst('aw taf drops hours', V('taf', 'ids=KSEF&hours=3').toString() === 'ids=KSEF&format=json');
+  tst('aw metar needs ids', V('metar', '') === null && V('metar', 'ids=K') === null && V('metar', 'ids=KSEF&hours=49') === null && V('metar', 'ids=KSEF&hours=x') === null);
+  tst('aw unknown ep', V('foo', 'ids=KSEF') === null && V('constructor', '') === null);
+  tst('aw airsigmet/cwa no params', V('airsigmet', '').toString() === 'format=json' && V('cwa', 'junk=1').toString() === 'format=json');
+  tst('aw gairmet type', V('gairmet', 'type=tango').toString() === 'type=tango&format=json' && V('gairmet', 'type=Tango') === null && V('gairmet', '') === null && V('gairmet', 'type=alpha') === null);
+  tst('aw pirep ok', V('pirep', 'bbox=30,-115,36,-108').toString() === 'bbox=30%2C-115%2C36%2C-108&age=3&format=json', String(V('pirep', 'bbox=30,-115,36,-108')));
+  tst('aw pirep age', V('pirep', 'bbox=30.5,-115.25,36,-108&age=6') !== null && V('pirep', 'bbox=30,-115,36,-108&age=7') === null && V('pirep', 'bbox=30,-115,36,-108&age=0') === null);
+  tst('aw pirep bad bbox', V('pirep', '') === null && V('pirep', 'bbox=30,-115,36') === null && V('pirep', 'bbox=36,-115,30,-108') === null
+    && V('pirep', 'bbox=30,-108,36,-115') === null && V('pirep', 'bbox=10,-115,20,-108') === null && V('pirep', 'bbox=30,-115,36,-50') === null
+    && V('pirep', 'bbox=20,-130,40,-110') === null && V('pirep', 'bbox=a,b,c,d') === null);
+}
+// ==== end tfrxml ====
 // ==== safety tests (OFP) ====
 {
   const Nav = require('./nav.js'), S = require('./safety.js');
@@ -607,4 +688,88 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   eq('Open-Meteo empty response is null', D._omWind({}, 0, 5000) === null && D._omWind(null, 0, 5000) === null ? 1 : 0, 1, 0);
 }
 // ==== end safety ====
+// ==== hazards tests (OFP) ====
+{
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  const S = require('./safety.js');
+  const A = { lat: 33.4225, lon: -112.376 }, B = { lat: 33.4225, lon: -111.376 }; // ~50 NM east along 33.4225N
+  const prof = (alt) => S.legProfile([{ dist: Nav2().dist(A, B), alt, prevAlt: alt, last: false }])[0];
+  function Nav2() { return require('./nav.js'); }
+  const T0 = Date.UTC(2026, 10, 25, 15, 0), T1 = T0 + 3600e3;
+  const mk = (alt) => [{ i: 0, a: A, b: B, profile: prof(alt), startMs: T0, endMs: T1 }];
+  // box around lon -111.9..-111.7 (about 15-25 NM from A)
+  const box = [[33.2, -111.9], [33.2, -111.7], [33.7, -111.7], [33.7, -111.9]];
+  const air = { id: 'A1', kind: 'AIRMET', hazard: 'TURB', sev: 'TANGO', from: T0, to: T1, baseFt: 8000, topFt: 18000, polys: [box], circles: [] };
+  const h = S.hazardHits(mk(9500), [air]);
+  tst('hazard polygon hit', h.length === 1 && h[0].leg === 0 && h[0].item === air, JSON.stringify(h.map((x) => x.firstNm)));
+  tst('hazard firstNm/lastNm plausible', h[0].firstNm > 22 && h[0].firstNm < 27 && h[0].lastNm > 31 && h[0].lastNm < 36 && h[0].minAlt === 9500, h[0].firstNm + '-' + h[0].lastNm);
+  tst('hazard leg above top is clear', S.hazardHits(mk(19500), [air]).length === 0);
+  tst('hazard leg below base is clear', S.hazardHits(mk(5500), [air]).length === 0);
+  tst('hazard outside time window', S.hazardHits(mk(9500), [{ ...air, from: T1 + 3600e3, to: T1 + 7200e3 }]).length === 0);
+  tst('hazard null times and null base/top always apply', S.hazardHits(mk(5500), [{ ...air, from: null, to: null, baseFt: null, topFt: null }]).length === 1);
+  // circle TFR 5 NM radius at lon -111.8
+  const tfr = { id: '6/1234', kind: 'TFR', hazard: 'SPACE', from: null, to: null, baseFt: 0, topFt: 17999, agl: false, polys: [], circles: [{ lat: 33.4225, lon: -111.8, radiusNm: 5 }] };
+  const ht = S.hazardHits(mk(6500), [tfr]);
+  tst('hazard circle hit', ht.length === 1 && ht[0].lastNm - ht[0].firstNm >= 8 && ht[0].lastNm - ht[0].firstNm <= 11, JSON.stringify(ht.map((x) => [x.firstNm, x.lastNm])));
+  tst('hazard circle missed when far', S.hazardHits(mk(6500), [{ ...tfr, circles: [{ lat: 34.5, lon: -111.8, radiusNm: 5 }] }]).length === 0);
+  // agl: floor 2000 AGL; flight at 4500 MSL over ground 3000 -> 1500 AGL (clear); over ground 0 -> inside
+  const agl = { ...tfr, baseFt: 2000, topFt: 5000, agl: true };
+  tst('hazard agl uses groundFt', S.hazardHits(mk(4500), [agl], { groundFt: 3000 }).length === 0 && S.hazardHits(mk(4500), [agl]).length === 1);
+  // snapshots: first covers the west box (lon -112.3..-112.1), second the east box; leg time near the end => second
+  const west = [[33.2, -112.3], [33.2, -112.1], [33.7, -112.1], [33.7, -112.3]];
+  const snap = { id: 'G1', kind: 'AIRMET', hazard: 'IFR', from: null, to: null, baseFt: null, topFt: null, polys: [], circles: [],
+    snapshots: [{ validMs: T0 - 3600e3, polys: [west] }, { validMs: T1, polys: [box] }] };
+  const hs = S.hazardHits(mk(6500), [snap]);
+  tst('hazard snapshot picks nearest by time', hs.length === 1 && hs[0].firstNm > 22 && hs[0].firstNm < 27, JSON.stringify(hs.map((x) => x.firstNm)));
+  // west area is crossed at 3-15 NM: by time that is ~7-18% of the hour, the first snapshot (T0) is nearest
+  const snap2 = { ...snap, snapshots: [{ validMs: T0, polys: [west] }, { validMs: T1 + 7200e3, polys: [box] }] };
+  const hs2 = S.hazardHits(mk(6500), [snap2]);
+  tst('hazard snapshot first area only with early snapshot', hs2.length === 1 && hs2[0].firstNm < 8, JSON.stringify(hs2.map((x) => x.firstNm)));
+  // ordering by leg then firstNm
+  const two = [{ i: 0, a: A, b: B, profile: prof(9500), startMs: T0, endMs: T1 }, { i: 1, a: B, b: A, profile: prof(9500), startMs: T1, endMs: T1 + 3600e3 }];
+  const ho = S.hazardHits(two, [{ ...air, to: null }, { ...air, id: 'A2', polys: [west], to: null }]);
+  tst('hazard ordering', ho.length === 4 && ho[0].leg === 0 && ho[0].firstNm <= ho[1].firstNm && ho[2].leg === 1 && ho[2].firstNm <= ho[3].firstNm, JSON.stringify(ho.map((x) => [x.leg, x.firstNm])));
+
+  // PIREPs
+  const legs = mk(6500);
+  const pr = [
+    { lat: 33.45, lon: -111.8, tbInt1: 'MOD', icgInt1: '', rawOb: 'X UA /OV X /TB MOD' },
+    { lat: 33.45, lon: -111.9, tbInt1: '', icgInt1: 'LGT', rawOb: 'X UA /IC LGT RIME' },
+    { lat: 33.45, lon: -111.7, tbInt1: '', icgInt2: 'NEGclr', rawOb: 'X UA /WX FV10SM' },
+    { lat: 35.5, lon: -111.8, tbInt1: 'SEV' },
+    { lat: 33.43, lon: -111.6, rawOb: 'ZZZ UA /OV ZZZ /TB LGT-MOD /RM' }
+  ];
+  const pn = S.pirepsNear(legs, pr, 25);
+  tst('pirep within radius, far one dropped', pn.length === 4 && pn.every((x) => x.leg === 0 && x.distNm < 25), String(pn.length));
+  tst('pirep turb flag', pn[0].turb === true && pn.find((x) => x.pirep === pr[0]).ice === false);
+  tst('pirep ice flag', pn.find((x) => x.pirep === pr[1]).ice === true && pn.find((x) => x.pirep === pr[1]).turb === false);
+  tst('pirep NEG is neither', (() => { const x = pn.find((y) => y.pirep === pr[2]); return !x.turb && !x.ice; })());
+  tst('pirep raw text fallback', pn.find((x) => x.pirep === pr[4]).turb === true);
+  tst('pirep radius filter', S.pirepsNear(legs, pr, 1).length === 1, String(S.pirepsNear(legs, pr, 1).length));
+
+  // vfrWx
+  const eta = Date.UTC(2026, 10, 25, 17, 30);
+  const taf = (fc) => ({ validTimeFrom: eta / 1000 - 7200, validTimeTo: eta / 1000 + 7200, fcsts: [Object.assign({ timeFrom: eta / 1000 - 5400, timeTo: eta / 1000 + 7200, fcstChange: null, wdir: 270, wspd: 8, wgst: null, visib: '6+', wxString: null, clouds: [] }, fc)] });
+  const metar = (o) => Object.assign({ obsTime: eta / 1000 - 600, wdir: 270, wspd: 5, wgst: null, visib: '10+', wxString: '', clouds: [{ cover: 'SCT', base: 8000 }], rawOb: 'METAR KGYR' }, o);
+  const wLow = S.vfrWx([metar()], taf({ clouds: [{ cover: 'BKN', base: 2500 }] }), eta);
+  tst('vfrWx low ceiling warn', wLow.some((x) => x.level === 'warn' && x.code === 'ceiling' && /BKN025/.test(x.text) && /3000/.test(x.text)), JSON.stringify(wLow));
+  tst('vfrWx good weather: no warn', S.vfrWx([metar()], taf({ clouds: [{ cover: 'SCT', base: 2500 }] }), eta).filter((x) => x.level === 'warn').length === 0);
+  const wVis = S.vfrWx([metar({ visib: 4 })], taf({}), eta);
+  tst('vfrWx metar visibility', wVis.some((x) => x.code === 'visibility' && /visibility 4 SM/.test(x.text)), JSON.stringify(wVis));
+  const wG = S.vfrWx([metar()], taf({ wgst: 28 }), eta);
+  tst('vfrWx gusts', wG.some((x) => x.code === 'gusts' && /gusts 28 kt/.test(x.text)), JSON.stringify(wG));
+  const wTs = S.vfrWx([metar()], taf({ wxString: 'TSRA' }), eta);
+  tst('vfrWx thunderstorm', wTs.some((x) => x.code === 'thunderstorm'), JSON.stringify(wTs));
+  tst('vfrWx metar overcast / VV', S.vfrWx([metar({ clouds: [{ cover: 'OVC', base: 1200 }] })], null, eta).some((x) => x.code === 'ceiling'));
+  const wNo = S.vfrWx([metar()], null, eta);
+  tst('vfrWx no TAF info', wNo.length === 1 && wNo[0].level === 'info' && wNo[0].code === 'noTaf', JSON.stringify(wNo));
+  const wOut = S.vfrWx([metar()], taf({}), eta + 10 * 3600e3);
+  tst('vfrWx ETA outside TAF', wOut.some((x) => x.level === 'info' && x.code === 'tafOutside'), JSON.stringify(wOut));
+  tst('vfrWx custom thresholds', S.vfrWx([metar({ clouds: [{ cover: 'BKN', base: 3500 }] })], null, eta, { ceilFt: 4000 }).some((x) => x.code === 'ceiling'));
+
+  // labels
+  tst('hazardLabel airmet', S.hazardLabel({ ...air, to: T0 + 6 * 3600e3 }) === 'AIRMET TANGO TURB 080\u2013FL180 15\u201321Z', S.hazardLabel({ ...air, to: T0 + 6 * 3600e3 }));
+  tst('hazardLabel tfr', S.hazardLabel(tfr) === 'TFR 6/1234 SFC\u201317999 ft', S.hazardLabel(tfr));
+}
+// ==== end hazards ====
 console.log(fail ? fail + ' FAILED' : 'ALL PASS'); process.exit(fail ? 1 : 0);

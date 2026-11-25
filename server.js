@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 8765, ROOT = __dirname;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.pdf': 'application/pdf', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json; charset=utf-8' };
 const relay = require('./api/aw/[ep].js');
+const tfr = require('./api/tfr.js');
 const config = require('./api/config.js');
 const invite = require('./api/admin/invite.js');
 const { verifyJwt, tokenFromRequest, accessDecision } = require('./lib/verify.js');
@@ -27,6 +28,7 @@ http.createServer(async (req, res) => {
   if (isInvite) return invite(req, res);
   if (url.pathname === '/api/config' || url.pathname === '/api/config.js') return config(req, res);
   if (url.pathname.startsWith('/api/aw/')) return relay(req, res);
+  if (url.pathname === '/api/tfr') return tfr(req, res);
   let rel;
   try { rel = path.normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, '') || 'index.html'; } catch (e) { res.writeHead(400); return res.end(); }
   const file = path.join(ROOT, rel === '' || rel.endsWith('/') ? rel + 'index.html' : rel);

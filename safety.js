@@ -405,7 +405,137 @@ function recommendAlts(leg, env) {
   return res;
 }
 
+/* ---------------- hazards: SIGMET / AIRMET / CWA / TFR / PIREP / airport weather ----------------
+ * Pure checks of the planned route against normalised hazards. Times are ms (Date), NM, ft MSL, [lat, lon] rings.
+ * hazardHits: item = {id, kind, hazard, sev, from, to (ms|null), baseFt, topFt (null = SFC / unlimited), agl, polys, circles:[{lat,lon,radiusNm}],
+ *   snapshots?:[{validMs, polys, baseFt, topFt}]} (G-AIRMET: the snapshot nearest the time at the point is used).
+ *   An `agl` item is compared against altitude minus opts.groundFt (default 0 = flat ground, so it is cautious for a high base
+ *   and wrong over high terrain; the caller can pass the route's highest terrain). */
+function legSamples(a, b, stepNm) {
+  const len = Nav.dist(a, b), n = Math.max(1, Math.ceil(len / (stepNm > 0 ? stepNm : 1)));
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const p = len < 1e-9 ? { lat: a.lat, lon: a.lon } : Nav.along(a, b, i / n);
+    pts.push({ nm: len * i / n, frac: i / n, lat: p.lat, lon: p.lon });
+  }
+  return pts;
+}
+function hazardHits(legs, items, opts) {
+  const step = (opts && opts.stepNm) || 1, ground = (opts && isNum(opts.groundFt)) ? opts.groundFt : 0;
+  const out = [];
+  (legs || []).forEach((lg) => {
+    const pts = legSamples(lg.a, lg.b, step);
+    (items || []).forEach((it) => {
+      if (!it) return;
+      const from = isNum(it.from) ? it.from : -Infinity, to = isNum(it.to) ? it.to : Infinity;
+      let first = null, last = null, minAlt = Infinity, maxAlt = -Infinity;
+      pts.forEach((p) => {
+        const t = lg.startMs + (lg.endMs - lg.startMs) * p.frac;
+        if (t < from || t > to) return;
+        let polys = it.polys, base = it.baseFt, top = it.topFt;
+        if (it.snapshots && it.snapshots.length) {
+          let s = it.snapshots[0];
+          it.snapshots.forEach((x) => { if (Math.abs(x.validMs - t) < Math.abs(s.validMs - t)) s = x; });
+          polys = s.polys; if (s.baseFt !== undefined) base = s.baseFt; if (s.topFt !== undefined) top = s.topFt;
+        }
+        const alt = altAt(lg.profile, p.nm);
+        if (!isNum(alt)) return;
+        const lo = isNum(base) ? base : 0, hi = isNum(top) ? top : Infinity, a2 = it.agl ? alt - ground : alt;
+        if (a2 < lo || a2 > hi) return;
+        const inside = (polys || []).some((r) => pointInPolygon(p.lat, p.lon, r)) ||
+          (it.circles || []).some((c) => Nav.dist(p, c) <= c.radiusNm);
+        if (!inside) return;
+        if (first === null) first = p.nm;
+        last = p.nm; minAlt = Math.min(minAlt, alt); maxAlt = Math.max(maxAlt, alt);
+      });
+      if (first !== null) out.push({ leg: lg.i, item: it, firstNm: round1(first), lastNm: round1(last), minAlt: Math.round(minAlt), maxAlt: Math.round(maxAlt) });
+    });
+  });
+  return out.sort((x, y) => x.leg - y.leg || x.firstNm - y.firstNm);
+}
+
+// PIREPs (aviationweather /api/data/pirep JSON): lat, lon, tbInt1/tbInt2 (LGT, MOD, SEV...), icgInt1/icgInt2 ('NEGclr' = none), rawOb.
+// One entry per report within radiusNm of the nearest leg (distance to the leg segment).
+function pirepsNear(legs, pireps, radiusNm) {
+  const rad = isNum(radiusNm) ? radiusNm : 25, out = [];
+  const present = (...v) => v.some((x) => x && !/^NEG/i.test(String(x)));
+  (pireps || []).forEach((p) => {
+    if (!p || !isNum(p.lat) || !isNum(p.lon)) return;
+    let best = null;
+    (legs || []).forEach((lg) => { const d = Nav.xtrack(p, lg.a, lg.b); if (!best || d < best.d) best = { d, leg: lg.i }; });
+    if (!best || best.d > rad) return;
+    const raw = String(p.rawOb || p.raw || '');
+    const hasFields = ['tbInt1', 'tbInt2', 'icgInt1', 'icgInt2'].some((k) => p[k] !== undefined);
+    let turb = present(p.tbInt1, p.tbInt2), ice = present(p.icgInt1, p.icgInt2);
+    if (!hasFields) { turb = /\/TB\s+(?!NEG)/i.test(raw); ice = /\/IC\s+(?!NEG)/i.test(raw); }
+    out.push({ leg: best.leg, pirep: p, distNm: round1(best.d), turb, ice });
+  });
+  return out.sort((x, y) => x.leg - y.leg || x.distNm - y.distNm);
+}
+
+// Airport weather against VFR minimums. Defaults 3000 ft AGL ceiling, 5 SM visibility (no thresholds existed elsewhere in the app).
+// Takes the already-picked pieces: `metar` (aviationweather metar object, e.g. Wx.nearestMetar(list, etaSec)) and `tafPeriod`
+// (an element of taf.fcsts, e.g. Wx.tafAt(taf, etaSec)). vfrWx() picks them with Wx when it is available.
+const Z2 = (sec) => new Date(sec * 1000).toISOString().slice(11, 13) + 'Z';
+const visSm = (v) => { if (isNum(v)) return v; const m = /(\d+(?:\.\d+)?)/.exec(String(v == null ? '' : v)); return m ? parseFloat(m[1]) : null; };
+function vfrWxFrom(metar, tafPeriod, o, tafInfo) {
+  const ceilFt = isNum(o && o.ceilFt) ? o.ceilFt : 3000, minVis = isNum(o && o.visSm) ? o.visSm : 5;
+  const out = [];
+  const src = (label, c, vis, gst, wx) => {
+    const lay = (c.clouds || []).filter((l) => /^(BKN|OVC|OVX|VV)$/.test(l.cover) && isNum(l.base)).sort((a, b) => a.base - b.base)[0];
+    let ceil = lay ? lay.base : null, txt = lay ? lay.cover + String(Math.round(lay.base / 100)).padStart(3, '0') : '';
+    if (isNum(c.vertVis) && (ceil === null || c.vertVis * 100 < ceil)) { ceil = c.vertVis * 100; txt = 'VV' + String(Math.round(c.vertVis)).padStart(3, '0'); }
+    if (ceil !== null && ceil < ceilFt) out.push({ level: 'warn', code: 'ceiling', text: label + ': ' + txt + ' - ceiling below ' + ceilFt + ' ft' });
+    const v = visSm(vis);
+    if (v !== null && v < minVis && !/\+\s*$/.test(String(vis))) out.push({ level: 'warn', code: 'visibility', text: label + ': visibility ' + v + ' SM - below ' + minVis + ' SM' });
+    if (isNum(gst) && gst > 0) out.push({ level: 'warn', code: 'gusts', text: label + ': gusts ' + Math.round(gst) + ' kt' });
+    if (/TS|CB/.test(String(wx || '')) || (c.clouds || []).some((l) => /^(CB|TCU)$/.test(l.type || ''))) out.push({ level: 'warn', code: 'thunderstorm', text: label + ': thunderstorm / CB (' + (String(wx || '').trim() || 'CB') + ')' });
+  };
+  if (metar) {
+    const raw = String(metar.rawOb || '');
+    const cb = /\b(?:FEW|SCT|BKN|OVC)\d{3}(?:CB|TCU)\b/.test(raw) ? 'CB' : '';
+    src('METAR at ' + Z2(metar.obsTime), metar, metar.visib, metar.wgst, (metar.wxString || '') + (cb ? ' ' + cb : ''));
+  }
+  if (tafPeriod) src('TAF at ' + Z2(tafPeriod.timeFrom), tafPeriod, tafPeriod.visib, tafPeriod.wgst, tafPeriod.wxString);
+  if (tafInfo === 'none') out.push({ level: 'info', code: 'noTaf', text: 'No TAF for this airport' });
+  else if (tafInfo === 'outside') out.push({ level: 'info', code: 'tafOutside', text: 'ETA outside TAF validity' });
+  return out;
+}
+// metars: aviationweather metar array for one station (newest first); taf: one TAF object or null; etaMs: ms. opts {ceilFt=3000, visSm=5}.
+// METAR "now" = newest report (within 1 h of now when opts.nowMs is given, else the newest), forecast = TAF period at the ETA.
+function vfrWx(metars, taf, etaMs, opts) {
+  const Wx = (typeof module !== 'undefined' && module.exports && typeof require === 'function') ? require('./wx.js') : root.Wx;
+  const o = opts || {}, etaS = etaMs / 1000;
+  const list = (metars || []).slice().sort((a, b) => b.obsTime - a.obsTime);
+  const metar = isNum(o.nowMs) ? Wx.nearestMetar(list, o.nowMs / 1000) : (list[0] || null);
+  let period = null, info = null;
+  if (!taf) info = 'none';
+  else if (!(etaS >= taf.validTimeFrom && etaS < taf.validTimeTo)) info = 'outside';
+  else {
+    period = Wx.tafAt(taf, etaS);
+    if (!period) { // tafAt skips periods without a wind; fall back to any period covering the ETA
+      period = (taf.fcsts || []).filter((f) => f.timeFrom <= etaS && etaS < f.timeTo && !/TEMPO|PROB/.test(f.fcstChange || ''))
+        .sort((a, b) => b.timeFrom - a.timeFrom)[0] || null;
+    }
+  }
+  return vfrWxFrom(metar, period, o, info);
+}
+
+// Short label: "AIRMET TANGO TURB 080-FL180 15-21Z" or "TFR 6/1234 SFC-17999 ft".
+function hazardLabel(it) {
+  const alt = (v, tfr) => (!isNum(v) ? null : v >= 18000 ? 'FL' + String(Math.round(v / 100)).padStart(3, '0') : tfr ? String(Math.round(v)) : String(Math.round(v / 100)).padStart(3, '0'));
+  const tfr = it.kind === 'TFR';
+  const lo = !isNum(it.baseFt) || it.baseFt <= 0 ? 'SFC' : alt(it.baseFt, tfr) + (it.agl ? ' AGL' : '');
+  const hi = !isNum(it.topFt) || it.topFt >= UNLIMITED ? 'UNL' : alt(it.topFt, tfr) + (it.agl && it.topFt < 18000 ? ' AGL' : '');
+  const z = (ms) => new Date(ms).toISOString().slice(11, 13);
+  const parts = tfr ? ['TFR', it.id] : [it.kind, typeof it.sev === 'string' ? it.sev : null, it.hazard];
+  let s = parts.filter(Boolean).join(' ') + ' ' + lo + '–' + hi + (tfr && hi !== 'UNL' && !/^FL/.test(hi) && !it.agl ? ' ft' : '');
+  if (isNum(it.from) && isNum(it.to)) s += ' ' + z(it.from) + '–' + z(it.to) + 'Z';
+  else if (isNum(it.to)) s += ' until ' + z(it.to) + 'Z';
+  return s;
+}
+
 const Safety = { interpWind, legProfile, altAt, pointInPolygon, airspaceConflicts, addsAlt, fromAddsAirspace,
-  glide, terrainFt, tileOf, tilePixelLatLon, corridorPoints, maxTerrain, maxElevation, checks, recommendAlts, UNLIMITED };
+  glide, terrainFt, tileOf, tilePixelLatLon, corridorPoints, maxTerrain, maxElevation, checks, recommendAlts, hazardHits, pirepsNear, vfrWx, vfrWxFrom, hazardLabel, UNLIMITED };
 if (typeof module !== 'undefined' && module.exports) module.exports = Safety; else root.Safety = Safety;
 })(typeof self !== 'undefined' ? self : this);
