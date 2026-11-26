@@ -96,7 +96,7 @@ const procedures = [
     ]),
   mk('GYR-DEP-TWINLAKES', 'KGYR', 'dep', 'Twin Lakes DEP', 'LIBERTY BRIDGE', 5, 7, 3500, null, 10,
     'RWY 21: runway heading to the Gila River, follow it ~230 to Liberty Bridge climbing 3500; RWY 3: 1700, crosswind/downwind climbing 3500 to the Gila River, then follow it to Liberty Bridge. Avoid overflying the housing around Twin Lakes. Monitor and report on 128.92 (Rainbow Valley) passing Liberty Bridge.', [
-      T('BISHOP', 'Bishop', [['WATERMAN WASH 1NM SW', 3500], ['1AZ0 MIDFIELD', 3500]], null,
+      T('BISHOP', 'Bishop', [['WATERMAN WASH 1NM SW', 3500], ['1AZ0', 3500]], null,
         'PPR required for 1AZ0 (no ops during CPS ops). Plate map marks this SOLO. ~190 from Liberty Bridge until 1 NM SW of Waterman Wash, then ~125/115 to cross 1AZ0 midfield at 3500; passing overhead climb on course or enter the pattern. Announce on 130.47 10 NM NW.'),
       T('TIREFARM', 'Tire Farm', [['WATERMAN WASH 1NM SW', 3500], ['TIRE FARM', 4500]], null,
         '~190 from Liberty Bridge until 1 NM SW of Waterman Wash, then ~150 climbing to 4500. Pass Tire Farm 1 NM SW.'),
@@ -124,7 +124,7 @@ const procedures = [
   mk('GYR-ARR-GAP', 'KGYR', 'arr', 'Gap ARR', 'THE GAP', 2, 5, 2500, FS, 2,
     'Arrive at the Gap at 2500, from the Gap descend and maintain 2000 and enter the pattern as directed. Call KGYR tower no closer than 4 NM south of the Gap. Report intentions to Rainbow Valley on 128.92. RWY 21: Sawed-Off Mtn then toward the tower, left DW; RWY 3: golf course 2 mile right base, or PIR then north to Lower Buckeye Rd for right DW.', [
       T('SOUTH', 'South', [], DUAL, 'DUAL ONLY. Arrive from south of the Gap at 2500 (~360).'),
-      T('BISHOP', 'Bishop', [['1AZ0 MIDFIELD', 4500], ['WATERMAN WASH 1NM NE', 2500]], null,
+      T('BISHOP', 'Bishop', [['1AZ0', 4500], ['WATERMAN WASH 1NM NE', 2500]], null,
         'PPR required for 1AZ0 (no ops during CPS ops). Cross 1AZ0 midfield at 4500, descend and maintain 2500, fly ~305 parallel 1 NM NE of Waterman Wash; when able to fly a northerly heading turn direct the Gap.'),
       T('TIREFARM', 'Tire Farm', [['TIRE FARM', 3500], ['WATERMAN WASH 1NM NE', 2500]], null,
         'Cross Tire Farm at 3500, ~350 until 1 NM NE of Waterman Wash, descend and maintain 2500 parallel to the wash; when able to fly a northerly heading turn direct the Gap.'),
@@ -157,7 +157,7 @@ const procedures = [
   // ---- E63 (B02 gives no time or distance; arrival points are not required at off-site airports)
   mk('E63-ARR-RWY22', 'E63', 'arr', 'E63 Pattern Entry RWY 22', 'E63 TRUCK STOP', null, null, 1600, null, 11,
     'Parallel I-8 on its north side (remain north of I-8 at all times). Over the motel/truck stop maneuver for a ~1.5 NM 45 degree entry to left traffic RWY 22; do not extend upwind. Contact Gila Bend AF Aux tower (127.75) ~15 NM out for wind and altimeter; CTAF 122.80. Pattern partly inside the Gila Bend AF Aux Class D.', [
-      T('NORTH', 'North', [['E63 MIDFIELD', 2600], ['BABY CAMELBACK NW', 1600]], null,
+      T('NORTH', 'North', [['E63', 2600], ['BABY CAMELBACK NW', 1600]], null,
         'Cross midfield at 2600, turn toward the NW corner of Baby Camelback Mountain on an easterly heading, keep 2600 for 20 seconds then descend to 1600. Approaching the mountain turn right toward the west using the dirt road south of I-8.'),
       T('EAST', 'East', [['BABY CAMELBACK NW', 1600]], null,
         'Aim for the NW corner of Baby Camelback Mountain, keep visual separation from terrain and descend to 1600. Abeam the mountain turn SW toward I-8.'),
@@ -192,7 +192,6 @@ const points = [
   { name: 'TONOPAH', desc: 'Tonopah (town) on I-10, W of the Hassayampa Wash (Buckeye DEP Tonopah, solo)', plate: BIN + '1' },
   { name: 'WATERMAN WASH 1NM SW', desc: 'Turn point 1 NM SW of Waterman Wash on the ~190 track from Liberty Bridge (Twin Lakes DEP Bishop/Tire Farm)', plate: BIN + '10' },
   { name: 'WATERMAN WASH 1NM NE', desc: 'Point 1 NM NE of Waterman Wash, where the Gap ARR Bishop/Tire Farm transitions join it at 2500', plate: BIN + '2' },
-  { name: '1AZ0 MIDFIELD', desc: 'Midfield over Bishop airport 1AZ0 (PPR), Gap ARR / Twin Lakes DEP Bishop transitions', plate: BIN + '2, 10' },
   { name: 'TIRE FARM', desc: 'Tire Farm (GBN063/D16), S of the Estrella Mtns near Waterman Wash', plate: BIN + '2, 10' },
   { name: 'GLENDALE POWER PLANT', desc: 'Glendale Power Plant on Grand Ave, NE of KGEU (pass 1 NM W arriving, 1 NM E departing)', plate: BIN + '7, 8' },
   { name: 'GILA S OF LUKE AUX 6', desc: 'Gila River crossing due south of Luke Aux 6 (Luke Aux 6 ARR Bishop: descend 2000)', plate: BIN + '9' },
@@ -201,7 +200,6 @@ const points = [
   { name: 'HASSAYAMPA GRAVEL PIT', desc: 'Gravel pit on the Hassayampa Wash N of I-10 (Luke Aux 6 ARR Northwest, solo)', plate: BIN + '9' },
   { name: 'FARM AG PVT', desc: 'NW corner of Farm Ag private strip, W of Buckeye town, S of the railroad (Luke Aux 6 ARR Southwest)', plate: BIN + '9' },
   { name: 'RIGGS RD EXTENSION', desc: 'Western extension of Riggs Rd SE of Gila Crossing, turn point of the KGEU solo routes', plate: BIN + '5, 6' },
-  { name: 'E63 MIDFIELD', desc: 'Midfield crossing over E63 Gila Bend Municipal at 2600 (E63 RWY 22 North transition)', plate: BIN + '11' },
   { name: 'BABY CAMELBACK NW', desc: 'NW corner of Baby Camelback Mountain, E of E63, north of I-8', plate: BIN + '11' },
   { name: 'E63 TRUCK STOP', desc: 'Motel/truck stop on the north side of I-8 SW of E63, start of the 45 entry RWY 22', plate: BIN + '11' },
   { name: 'VOLCANO MTN', desc: 'Black volcano-like mountain south of the Gila River (KBXK Pipeline departure)', plate: BIN + '12' },
@@ -240,7 +238,8 @@ const pointNames = (procs) => {
   return Array.from(s).sort();
 };
 
-const lookup = (byName, name) => byName[name] || byName[String(name).toUpperCase()];
+// byName: {name: point} or a function name -> point (the OFP page also resolves LAT airport idents, e.g. '1AZ0', to the airport)
+const lookup = (byName, name) => (typeof byName === 'function' ? byName(name) : byName[name] || byName[String(name).toUpperCase()]);
 const usable = function (proc, tr, byName) {
   if (arguments.length < 3) { byName = tr; tr = null; }
   if (!proc || !byName) return false;

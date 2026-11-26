@@ -354,8 +354,12 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   ok('Power Plant DEP +10 into KGEU, PP dep/arr dual only', byId('GYR-DEP-POWERPLANT').extraMinDest.KGEU === 10 && byId('GYR-DEP-POWERPLANT').dualOnly && byId('GYR-ARR-POWERPLANT').dualOnly);
   // point names
   const listed = new Set(ATO.points.map((p) => p.name)), all = ATO.pointNames(ATO.procedures);
-  ok('every gate/transition point is uppercase, <=40 chars and listed in ATO.points',
-    all.length > 20 && all.every((n) => n === n.toUpperCase() && n.length <= 40 && listed.has(n)) && ATO.points.every((p) => p.desc && all.indexOf(p.name) >= 0));
+  ok('every gate/transition point is uppercase, <=40 chars and listed in ATO.points (or a LAT airport ident)',
+    all.length > 20 && all.every((n) => n === n.toUpperCase() && n.length <= 40 && (listed.has(n) || LAT[n])) && ATO.points.every((p) => p.desc && all.indexOf(p.name) >= 0));
+  ok('1AZ0 / E63 transitions cross the airport itself (no midfield points)', !all.some((n) => /MIDFIELD/.test(n)) && ['1AZ0', 'E63'].every((n) => all.includes(n)));
+  const bish = byId('GYR-ARR-GAP') || ATO.procedures.find((p) => (p.transitions || []).some((t) => t.points.some((q) => q.name === '1AZ0')));
+  const bt = bish.transitions.find((t) => t.points.some((q) => q.name === '1AZ0'));
+  ok('usable() accepts a lookup function', ATO.usable(bish, bt.id, (n) => ({ lat: 1, lon: 1 })) && !ATO.usable(bish, bt.id, (n) => (n === '1AZ0' ? null : { lat: 1, lon: 1 })));
   ok('pointNames sorted unique', all.join('|') === Array.from(new Set(all)).sort().join('|'));
 }
 // ==== end ato2 ====
