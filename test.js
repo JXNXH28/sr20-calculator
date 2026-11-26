@@ -166,4 +166,626 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   const legLm = (i, trip) => 2500 + (lw2.legs[i].fuel - trip) * P.LB_PER_USG;
   eq('leg1 landing mass', legLm(0, 10), 2500 + 30 * P.LB_PER_USG); eq('last leg landing mass = lm', legLm(1, 8), lw2.lm);
 }
+// ==== nav tests (OFP) ====
+{
+  const Nav = require('./nav.js');
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  eq('nav eet 8nm/147', Nav.eet(8, 147), 4, 0);
+  eq('nav 4min leg fuel @12.9', Math.round(4 / 60 * 12.9 * 10) / 10, 0.9, 1e-9);
+  const c1 = Nav.climbAdd(2700, 5500), c2 = Nav.climbAdd(5500, 6500), c3 = Nav.climbAdd(6500, 5500);
+  eq('nav climb 2700-5500 min', c1.min, 2, 0); eq('nav climb 2700-5500 gal', c1.gal, 0.8, 1e-9);
+  eq('nav climb 5500-6500 min', c2.min, 1, 0); eq('nav climb 5500-6500 gal', c2.gal, 0.3, 1e-9);
+  eq('nav descent adds nothing', c3.min + c3.gal, 0, 0);
+  eq('nav pattern 3 T&G + full stop min', Nav.pattern({ touchGo: 3, fullStop: true }).min, 25, 0);
+  eq('nav pattern fuel 25 min @12.7', Math.round(25 / 60 * 12.7 * 10) / 10, 5.3, 1e-9);
+  eq('nav taxi-back gal', Nav.pattern({ taxiBack: 1 }).gal, 0.5, 0);
+  eq('nav pattern full stop only', Nav.pattern({ fullStop: true }).min, 10, 0);
+  eq('nav pattern airwork only', Nav.pattern({ airwork: 30 }).min, 30, 0);
+  eq('nav msa 4512', Nav.msa(4512), 6000, 0); eq('nav msa 4500', Nav.msa(4500), 5500, 0);
+  eq('nav tod 6500->1600', Nav.todNm(6500, 1600), 19.7, 0.05);
+  eq('nav toc 2700->6500', Nav.tocNm(3700, 6500), 6500 > 0 ? (2800 / 500) * 105 / 60 : 0, 1e-9);
+  // wind triangle (B02 example winds; the E6B figures in B02 are rounded by hand, see computeOfp comment)
+  eq('nav wca mc309 wind 240/10', Nav.windTriangle({ mc: 309, tas: 151, wdir: 240, wspd: 10 }).wca, -4, 0);
+  eq('nav wca mc124 wind 250/10', Nav.windTriangle({ mc: 124, tas: 150, wdir: 250, wspd: 10 }).wca, 3, 0);
+  const wrap = Nav.windTriangle({ mc: 358, tas: 150, wdir: 2, wspd: 20 });
+  eq('nav wrap gs 358/002', wrap.gs, 130, 0); eq('nav wrap wca small', Math.abs(wrap.wca), 1, 0); eq('nav wrap hdg', wrap.hdg, 359, 0);
+  const wrap2 = Nav.windTriangle({ mc: 350, tas: 150, wdir: 10, wspd: 20 });
+  tst('nav wrap 350 vs wind 010 = 20 deg angle', wrap2.gs === 131 && wrap2.wca === 3, JSON.stringify(wrap2));
+  eq('nav angDiff wrap', Nav.angDiff(2, 358), 4, 0); eq('nav angDiff wrap neg', Nav.angDiff(358, 2), -4, 0);
+  tst('nav wind too strong -> error', Nav.windTriangle({ mc: 90, tas: 100, wdir: 0, wspd: 120 }).error === 'wind');
+  tst('nav headwind > tas -> error', Nav.windTriangle({ mc: 90, tas: 100, wdir: 90, wspd: 120 }).error === 'wind');
+  tst('nav semicircular east 5500', Nav.semicircularOk(90, 5500, 1000) === true);
+  tst('nav semicircular west 5500 bad', Nav.semicircularOk(270, 5500, 1000) === false);
+  tst('nav semicircular 359 @6500', Nav.semicircularOk(359, 6500, 1000) === true);
+  tst('nav semicircular below 3000 AGL', Nav.semicircularOk(270, 3500, 1000) === true);
+  tst('nav semicircular alts east', JSON.stringify(Nav.semicircularAlts(90, 4000, 9000)) === '[5500,7500]');
+  tst('nav semicircular alts west', JSON.stringify(Nav.semicircularAlts(270, 4000, 9000)) === '[4500,6500,8500]');
+  eq('nav glide reach', Nav.glideReachNm(6500, 1600), 4900 / 6076 * 9 * 0.8, 1e-9); eq('nav glide never negative', Nav.glideReachNm(1000, 2000), 0, 0);
+  const GYR = { lat: 33.4225, lon: -112.3760 }, PHX = { lat: 33.4343, lon: -112.0116 };
+  eq('nav dist GYR-PHX', Nav.dist(GYR, PHX), 18.27, 0.1); eq('nav brg GYR-PHX', Nav.brg(GYR, PHX), 87.68, 0.3);
+  const vGyr = Nav.variation(GYR, new Date('2026-11-24'));
+  tst('nav variation GYR 9.5..11 E', vGyr > 9.5 && vGyr < 11, vGyr);
+  const vDen = Nav.variation({ lat: 39.74, lon: -104.99 }, new Date('2026-11-24')), vMia = Nav.variation({ lat: 25.76, lon: -80.19 }, new Date('2026-11-24'));
+  tst('nav variation Denver ~ +7.5 E', Math.abs(vDen - 7.5) < 0.6, vDen); tst('nav variation Miami ~ -7.4 (W)', Math.abs(vMia + 7.4) < 0.6, vMia);
+  const mcGE = Nav.magCourse(GYR, PHX, new Date('2026-11-24'));
+  eq('nav magCourse = TC - E var', mcGE, 87.68 - vGyr, 1.5);
+  const mid = Nav.mid(GYR, PHX); eq('nav mid lon', mid.lon, -112.194, 0.01);
+  const off = Nav.offset(GYR, 87.68, 18.27); eq('nav offset east ~ PHX lon', off.lon, -112.0116, 0.02);
+  eq('nav xtrack on line', Nav.xtrack(mid, GYR, PHX), 0, 0.05); eq('nav xtrack past end', Nav.xtrack({ lat: 33.4343, lon: -111.9 }, GYR, PHX), Nav.dist({ lat: 33.4343, lon: -111.9 }, PHX), 0.01);
+  tst('nav fmtEet', Nav.fmtEet(5) === ':05' && Nav.fmtEet(65) === '1:05' && Nav.fmtEet(39) === ':39');
+  tst('nav addHHMM', Nav.addHHMM('1006', 5) === '1011' && Nav.addHHMM('2358', 5) === '0003');
+
+  // B02 worked example (SEP-26 p85): KGYR -> E63, T/O 1006, 54.5 USG, FF 12.7. Per-row winds/FF chosen so the
+  // wind triangle reproduces the printed GS and WCA (B02's E6B figures differ slightly from pure maths at 250/10).
+  const ofp = Nav.computeOfp({ toTime: '1006', takeoffFuel: 54.5, reserveMin: 30, cruiseFf: 12.7, rows: [
+    { name: 'PIR', alt: 2700, msa: 6000, mc: null, dist: 5, tas: 146, ff: 12.9, fixed: { min: 5, nm: 5 } },
+    { name: 'Gila Crossing', alt: 2700, msa: 6000, mc: 121, dist: 10, wdir: 250, wspd: 8, tas: 146, ff: 12.9, prevAlt: 2700 },
+    { name: 'North Test Track', alt: 5500, msa: 5500, mc: 124, dist: 18, wdir: 240, wspd: 8, tas: 150, ff: 12.8, prevAlt: 2700 },
+    { name: 'Motown', alt: 6500, msa: 4000, mc: 235, dist: 19, wdir: 240, wspd: 10, tas: 151, ff: 12.7, prevAlt: 5500, pattern: { airwork: 30 } },
+    { name: 'Tire Farm', alt: 6500, msa: 4500, mc: 309, dist: 8, wdir: 240, wspd: 10, tas: 151, ff: 12.9, prevAlt: 6500 },
+    { name: 'E63', alt: 1600, msa: 4500, mc: 245, dist: 16, wdir: 250, wspd: 10, tas: 151, ff: 12.7, prevAlt: 6500, pattern: { touchGo: 3, fullStop: true } }
+  ] });
+  const want = [ // eet, gs, wca, legFuel, plFuel, minFuel
+    [5, null, null, 1.1, 53.4, 25.6], [4, 151, 2, 0.9, 52.5, 24.7], [9, 153, 3, 2.3, 50.2, 22.4],
+    [39, 141, 0, 8.3, 41.9, 14.1], [4, 147, -4, 0.9, 41.0, 13.2], [32, 141, 0, 6.8, 34.2, 6.4]];
+  ofp.rows.forEach((r, i) => {
+    const w = want[i], n = 'B02 row ' + (i + 1) + ' ' + r.name + ' ';
+    eq(n + 'EET', r.eet, w[0], 0); if (w[1] !== null) { eq(n + 'GS', r.gs, w[1], 0); eq(n + 'WCA', r.wca, w[2], 0); }
+    eq(n + 'leg fuel', r.legFuel, w[3], 1e-9); eq(n + 'Pl fuel', r.plFuel, w[4], 1e-9); eq(n + 'Min fuel', r.minFuel, w[5], 1e-9);
+  });
+  eq('B02 trip fuel', ofp.totals.trip, 20.3, 1e-9); eq('B02 total EET', ofp.totals.eet, 93, 0); eq('B02 reserve', ofp.reserveGal, 6.4, 1e-9);
+  eq('B02 PTO last', Number(ofp.rows[5].pto), 1139, 0);
+  tst('B02 how string', /^8 NM \/ 147 kt = 3\.3 min/.test(ofp.rows[4].how.eet), ofp.rows[4].how.eet);
+  // header wind 250/10 for every leg stays within 3 kt / 1 deg of B02's hand-E6B figures
+  [[121, 146, 151, 2], [124, 150, 153, 3], [235, 151, 141, 0], [309, 151, 147, -4], [245, 151, 141, 0]].forEach(([mc, tas, gs, wca]) => {
+    const t = Nav.windTriangle({ mc, tas, wdir: 250, wspd: 10 });
+    tst('B02 header wind 250/10 close on MC ' + mc, Math.abs(t.gs - gs) <= 5 && Math.abs(t.wca - wca) <= 1, JSON.stringify(t));
+  });
+  // wind too strong: error row, no NaN anywhere
+  const bad = Nav.computeOfp({ toTime: '1006', takeoffFuel: 50, reserveMin: 30, cruiseFf: 12.7, rows: [
+    { name: 'A', alt: 5500, mc: 90, dist: 10, wdir: 0, wspd: 120, tas: 100, ff: 12.7 }, { name: 'B', alt: 5500, mc: 90, dist: 10, wdir: 90, wspd: 0, tas: 100, ff: 12.7 }] });
+  tst('computeOfp wind error flagged, no NaN', bad.rows[0].error === 'wind' && !/NaN/.test(JSON.stringify(bad)) && bad.totals.incomplete === true, JSON.stringify(bad.totals));
+  tst('computeOfp empty rows', Nav.computeOfp({ toTime: '1006', takeoffFuel: 50, reserveMin: 30, cruiseFf: 12.7, rows: [] }).rows.length === 0);
+  // wrap through north in a full row
+  const wr = Nav.computeOfp({ toTime: '1006', takeoffFuel: 50, reserveMin: 30, cruiseFf: 12.7, rows: [{ name: 'A', alt: 5500, mc: 358, dist: 13, wdir: 2, wspd: 20, tas: 150, ff: 12.7 }] });
+  eq('computeOfp wrap GS', wr.rows[0].gs, 130, 0);
+  const xm = Nav.computeOfp({ toTime: '1000', takeoffFuel: 40, reserveMin: 30, cruiseFf: 12.0, rows: [{ name: 'A', alt: 3500, mc: 90, dist: 12, wdir: 90, wspd: 0, tas: 150, ff: 12.0, prevAlt: 3500 }, { name: 'KGEU', alt: 2000, mc: 90, dist: 12, wdir: 90, wspd: 0, tas: 150, ff: 12.0, prevAlt: 3500, extraMin: 10, extraHow: 'Power Plant DEP into KGEU' }] });
+  eq('computeOfp extraMin adds minutes', xm.rows[1].eet - xm.rows[0].eet, 10, 0);
+  eq('computeOfp extraMin fuel at cruise FF', Math.round((xm.rows[1].legFuel - xm.rows[0].legFuel) * 10) / 10, 2.0, 1e-9);
+  tst('computeOfp extraMin how and no pattern', /Power Plant DEP into KGEU/.test(xm.rows[1].how.extra) && !xm.rows[1].pattern);
+}
+// ==== end nav ====
+// ==== cruise tests (OFP) ====
+{
+  const c = P.cruise({ pa: 6500, isaDev: 0 });
+  eq('cruise 6500 ISA tas', c.tas, 151, 2); eq('cruise 6500 ISA ff', c.ff, 12.7, 0.3); eq('cruise 6500 ISA pwr', c.pwr, 74.5, 0.6);
+  const g = P.cruise({ pa: 8000, isaDev: 0, pwr: 72 });
+  eq('cruise 8000 grid pwr', g.pwr, 72); eq('cruise 8000 grid tas', g.tas, 152); eq('cruise 8000 grid ff', g.ff, 11.9);
+  eq('cruise 8000 75% capped', P.cruise({ pa: 8000, isaDev: 0 }).capped, true);
+  eq('cruise 4000 75% not capped', !!P.cruise({ pa: 4000, isaDev: 0 }).capped, false);
+  eq('cruise pa clamps low', P.cruise({ pa: 0, isaDev: 0 }).tas, P.cruise({ pa: 2000, isaDev: 0 }).tas);
+  eq('cruise pa clamps high', P.cruise({ pa: 20000, isaDev: 0 }).tas, P.cruise({ pa: 14000, isaDev: 0 }).tas);
+  eq('cruise warmer is faster', P.cruise({ pa: 4000, isaDev: 15 }).tas > P.cruise({ pa: 4000, isaDev: 0 }).tas, true);
+  eq('isaTemp 6000', P.isaTemp(6000), 3);
+}
+// ==== end cruise ====
+// ==== ato tests (OFP) ====
+{
+  const ATO = require('./ato.js');
+  const ok = (name, c) => { if (!c) fail++; console.log((c ? 'ok   ' : 'FAIL ') + name); };
+  const dep = ATO.forAirport('KGYR', 'dep'), arr = ATO.forAirport('KGYR', 'arr');
+  const by = (l, id) => l.find((p) => p.id === id);
+  const bk = by(dep, 'GYR-DEP-BUCKEYE');
+  ok('Buckeye DEP -> LIBERTY BRIDGE 4 min / 7 NM', bk && bk.point === 'LIBERTY BRIDGE' && bk.min === 4 && bk.nm === 7);
+  const gc = by(dep, 'GYR-DEP-GILACROSSING');
+  ok('Gila Crossing DEP -> PIR 5/5', gc && gc.point === 'PIR' && gc.min === 5 && gc.nm === 5);
+  const tl = by(dep, 'GYR-DEP-TWINLAKES');
+  ok('Twin Lakes DEP -> LIBERTY BRIDGE 5/7', tl && tl.point === 'LIBERTY BRIDGE' && tl.min === 5 && tl.nm === 7);
+  const ppd = dep.find((p) => p.point === 'THE STACK'), ppa = arr.find((p) => p.point === 'THE STACK');
+  ok('Stack arrival 3 min, Stack departure 5 min', ppa.min === 3 && ppd.min === 5 && ppa.nm === 6 && ppd.nm === 6);
+  ok('Power Plant is dual only; +10 for KGEU', ppd.dualOnly && ppa.dualOnly && ppd.extraMinDest.KGEU === 10);
+  ok('Luke Aux 6 / Gap / Gila Crossing arrivals', by(arr, 'GYR-ARR-LUKEAUX6').min === 3 && by(arr, 'GYR-ARR-LUKEAUX6').nm === 7
+    && by(arr, 'GYR-ARR-GAP').min === 2 && by(arr, 'GYR-ARR-GAP').nm === 5
+    && by(arr, 'GYR-ARR-GILACROSSING').min === 6 && by(arr, 'GYR-ARR-GILACROSSING').nm === 14);
+  ok('KGYR full-stop arrivals add 10 min, departures 0', arr.every((p) => p.extraMin === 10) && dep.every((p) => p.extraMin === 0));
+  ok('ids unique', new Set(ATO.procedures.map((p) => p.id)).size === ATO.procedures.length);
+  const names = new Set(ATO.points.map((p) => p.name));
+  ok('point names unique and every procedure point is listed', names.size === ATO.points.length && ATO.procedures.every((p) => names.has(p.point)));
+  ok('forAirport filters kind', dep.every((p) => p.kind === 'dep') && ATO.forAirport('KGYR').length === dep.length + arr.length);
+  ok('forAirport unknown airport is empty', ATO.forAirport('KXXX', 'dep').length === 0);
+  ok('usable false with no waypoints', !ATO.usable(bk, {}) && !ATO.usable(bk, null) && !ATO.usable(bk, { 'LIBERTY BRIDGE': {} }) && !ATO.usable(bk, { 'LIBERTY BRIDGE': { lat: null, lon: null } }));
+  ok('usable true with coordinates', ATO.usable(bk, { 'LIBERTY BRIDGE': { lat: 33.3, lon: -112.6 } }));
+}
+// ==== end ato ====
+// ==== ato2 tests (OFP) ====
+{
+  const ATO = require('./ato.js');
+  const ok = (name, c) => { if (!c) fail++; console.log((c ? 'ok   ' : 'FAIL ') + name); };
+  const byId = (id) => ATO.procedures.find((p) => p.id === id);
+  const bk = byId('GYR-DEP-BUCKEYE'), gap = byId('GYR-ARR-GAP');
+  const wx = ATO.expand(bk, 'GYR-DEP-BUCKEYE.WEST');
+  ok('Buckeye DEP Western: LIBERTY BRIDGE gate first, then Arlington, ends at Hassayampa/I-10',
+    wx[0].name === 'LIBERTY BRIDGE' && wx[0].role === 'gate' && wx[1].name === 'ARLINGTON' && wx[1].alt === 3000 && wx[1].role === 'trans'
+    && wx[wx.length - 1].name === 'HASSAYAMPA I-10' && wx[wx.length - 1].alt === 5000);
+  const tf = ATO.expand(gap, 'GYR-ARR-GAP.TIREFARM');
+  ok('Gap ARR Tire Farm: TIRE FARM first, THE GAP last (gate)',
+    tf[0].name === 'TIRE FARM' && tf[0].alt === 3500 && tf[tf.length - 1].name === 'THE GAP' && tf[tf.length - 1].role === 'gate' && tf.filter((p) => p.role === 'gate').length === 1);
+  ok('unknown / empty transition -> only the gate', ['NOPE', '', null, undefined].every((t) => { const e = ATO.expand(bk, t); return e.length === 1 && e[0].name === 'LIBERTY BRIDGE' && e[0].role === 'gate'; }));
+  ok('transition ids are <procId>.<SHORT> and unique', ATO.procedures.every((p) => p.transitions.every((t) => t.id.indexOf(p.id + '.') === 0))
+    && new Set([].concat(...ATO.procedures.map((p) => p.transitions.map((t) => t.id)))).size === [].concat(...ATO.procedures.map((p) => p.transitions)).length);
+  ok('gate and legacy point agree', ATO.procedures.every((p) => p.gate && p.point === p.gate && Array.isArray(p.transitions)));
+  ok('flags per plate: Gap South dual, Twin Lakes Southwest dual, (SOLO) routes stay open to dual flights',
+    gap.transitions.find((t) => t.id === 'GYR-ARR-GAP.SOUTH').dualOnly && byId('GYR-DEP-TWINLAKES').transitions.find((t) => t.name === 'Southwest').dualOnly
+    && !byId('GYR-ARR-LUKEAUX6').transitions.find((t) => t.name === 'Northwest').soloOnly && !bk.transitions.find((t) => t.name === 'Tonopah').soloOnly);
+  ok('Glendale ARR entry at 2100', byId('GEU-ARR-GLENDALE').alt === 2100);
+  // merge
+  const defs = ATO.procedures.slice(0, 3), snap = JSON.stringify(defs);
+  const rows = [
+    { id: 'GYR-DEP-BUCKEYE', data: Object.assign({}, bk, { alt: '2500' }) },
+    { id: 'ZZ-NEW-2', data: { airport: 'KAAA', kind: 'dep', name: 'B proc', gate: 'X2', transitions: [{ name: 'Left', points: [{ name: 'P1', alt: '3000' }] }] } },
+    { id: 'ZZ-NEW-1', data: { airport: 'KAAA', kind: 'dep', name: 'A proc', gate: 'X1' } },
+    { id: 'GYR-DEP-TWINLAKES', hidden: true },
+    null, 'junk', { id: 5, data: {} }, { id: 'BAD', data: 'x' }, { data: { gate: 'Q' } }, { id: 'BAD2' },
+  ];
+  const rowsSnap = JSON.stringify(rows);
+  const m = ATO.merge(defs, rows);
+  ok('merge: override replaces (alt coerced to number)', m.find((p) => p.id === 'GYR-DEP-BUCKEYE').alt === 2500);
+  ok('merge: hidden removes', !m.some((p) => p.id === 'GYR-DEP-TWINLAKES'));
+  ok('merge: order = defaults, then new sorted by airport/kind/name', m.map((p) => p.id).join() === 'GYR-DEP-GILACROSSING,GYR-DEP-BUCKEYE,ZZ-NEW-1,ZZ-NEW-2');
+  const nw = m.find((p) => p.id === 'ZZ-NEW-2');
+  ok('merge: new rows normalized (transition id generated, point alt numeric, flags false)', nw.point === 'X2' && nw.transitions[0].id === 'ZZ-NEW-2.LEFT'
+    && nw.transitions[0].points[0].alt === 3000 && nw.dualOnly === false && nw.transitions[0].soloOnly === false && nw.extraMin === 0 && nw.min === null);
+  ok('merge: malformed rows ignored', m.length === 4 && !m.some((p) => p.id === 'BAD' || p.id === 'BAD2'));
+  ok('merge: inputs not mutated', JSON.stringify(defs) === snap && JSON.stringify(rows) === rowsSnap && ATO.procedures[1].alt === 2000);
+  ok('merge: null / undefined rows keep defaults', ATO.merge(ATO.procedures, null).length === ATO.procedures.length && ATO.merge(ATO.procedures).length === ATO.procedures.length);
+  ok('normalize: empty input is safe', (() => { const n = ATO.normalize(null); return n.transitions.length === 0 && n.extraMin === 0 && n.dualOnly === false && n.soloOnly === false && n.point === n.gate; })());
+  ok('forAirport with a custom list', ATO.forAirport('KAAA', 'dep', m).length === 2 && ATO.forAirport('KAAA', 'dep').length === 0);
+  // usable
+  const W = { 'LIBERTY BRIDGE': { lat: 33.36, lon: -112.6 }, ARLINGTON: { lat: 33.34, lon: -112.76 } };
+  ok('usable: false when a transition point is missing', !ATO.usable(bk, 'GYR-DEP-BUCKEYE.WEST', W));
+  ok('usable: true when all placed (uppercase lookup)', ATO.usable(bk, 'GYR-DEP-BUCKEYE.WEST', Object.assign({ 'hassayampa i-10': null, 'HASSAYAMPA I-10': { lat: 33.45, lon: -112.8 } }, W)));
+  ok('usable: legacy 2-arg form checks the gate only', ATO.usable(bk, W) && !ATO.usable(bk, {}) && ATO.usable(bk, null, W));
+  // B02 numbers
+  const b02 = { 'GYR-DEP-GILACROSSING': ['PIR', 5, 5], 'GYR-DEP-BUCKEYE': ['LIBERTY BRIDGE', 4, 7], 'GYR-DEP-TWINLAKES': ['LIBERTY BRIDGE', 5, 7], 'GYR-DEP-POWERPLANT': ['THE STACK', 5, 6],
+    'GYR-ARR-LUKEAUX6': ['LUKE AUX 6', 3, 7], 'GYR-ARR-GAP': ['THE GAP', 2, 5], 'GYR-ARR-GILACROSSING': ['GILA CROSSING', 6, 14], 'GYR-ARR-POWERPLANT': ['THE STACK', 3, 6] };
+  ok('B02 gate/min/nm unchanged for the 8 KGYR procedures', Object.keys(b02).every((id) => { const p = byId(id), w = b02[id]; return p && p.gate === w[0] && p.min === w[1] && p.nm === w[2]; })
+    && ATO.forAirport('KGYR').length === 8);
+  ok('full-stop +10 on all four KGYR arrivals', ATO.forAirport('KGYR', 'arr').length === 4 && ATO.forAirport('KGYR', 'arr').every((p) => p.extraMin === 10));
+  ok('Power Plant DEP +10 into KGEU, PP dep/arr dual only', byId('GYR-DEP-POWERPLANT').extraMinDest.KGEU === 10 && byId('GYR-DEP-POWERPLANT').dualOnly && byId('GYR-ARR-POWERPLANT').dualOnly);
+  // point names
+  const listed = new Set(ATO.points.map((p) => p.name)), all = ATO.pointNames(ATO.procedures);
+  ok('every gate/transition point is uppercase, <=40 chars and listed in ATO.points',
+    all.length > 20 && all.every((n) => n === n.toUpperCase() && n.length <= 40 && listed.has(n)) && ATO.points.every((p) => p.desc && all.indexOf(p.name) >= 0));
+  ok('pointNames sorted unique', all.join('|') === Array.from(new Set(all)).sort().join('|'));
+}
+// ==== end ato2 ====
+// ==== print tests (OFP) ====
+{
+  const OP = require('./ofpprint.js');
+  const mkRow = (i, o) => Object.assign({ name: 'PT' + i, ident: 'PT' + i, lat: 33.4, lon: -112.5, alt: 5500, msa: 6000, mc: 90 + i, dist: 12.3, wdir: 250, wspd: 10, tas: 100, ff: 12.7,
+    wca: -4, gs: 105, eet: 7, pto: '1013', legFuel: 1.5, plFuel: 50.0, minFuel: 20.1, fixed: null, pattern: null }, o || {});
+  const mkLog = (n) => ({ rows: Array.from({ length: n }, (_, i) => mkRow(i)), totals: { eet: 49, trip: 10.5 } });
+  const hdr = { from: 'KGYR', to: 'KE63', offBlock: '1000', onBlock: '1130', toTime: '1006', callsign: 'N123AB', reg: 'N123AB', cruiseFf: 12.7, magWind: '250/10', alt: '5500', date: '26 Apr 2025',
+    mission: 'NAV', crew: ['Smith', 'Jones'], takeoffFuel: 54.5, notes: ['Verify MSA on chart', 'Wx: CAVOK'] };
+  const inBox = (it, b) => it.x >= b.x0 - 0.01 && it.x + it.text.length * it.size * 0.5 <= b.x1 + 0.01 && it.y >= b.y0 && it.y + it.size * 0.7 <= b.y1 + 0.5;
+  const L1 = OP.layout(mkLog(7), hdr);
+  const e1 = L1.find((it) => it.text === ':07');
+  const b1 = OP.cell('left', 0, 'eet', 0);
+  console.log((e1 && inBox(e1, b1) ? 'ok   ' : 'FAIL ') + 'leg1 EET inside left EET cell'); if (!(e1 && inBox(e1, b1))) fail++;
+  // 19 legs -> 18 placed; leg 12 is the first on the right ladder
+  const L18 = OP.layout(mkLog(19), hdr);
+  const wpts = L18.filter((it) => /^PT\d+$/.test(it.text)).map((it) => it.text);
+  eq('19-leg log places 18 legs', wpts.length, 18, 0);
+  eq('leg 11 still left', L18.find((it) => it.text === 'PT10').x < 396 ? 1 : 0, 1, 0);
+  eq('leg 12 is on the right ladder', L18.find((it) => it.text === 'PT11').x > 396 ? 1 : 0, 1, 0);
+  eq('no ETO ever printed', L18.filter((it) => it.text === '1013' && it.x > 192.9 && it.x < 227.8 && it.y > 400).length, 0, 0);
+  // fixed first leg: Dep in MC, no WCA/GS, only MC XXX covered; non-fixed: all four covered, MC printed
+  const fx = { rows: [mkRow(0, { name: 'PIR', fixed: { min: 5, nm: 5 }, eet: 5, dist: 5 })], totals: { eet: 5, trip: 1 } };
+  const Lf = OP.layout(fx, hdr);
+  eq('fixed leg prints Dep', Lf.filter((it) => it.text === 'Dep').length, 1, 0);
+  eq('fixed leg: no GS/WCA text', Lf.filter((it) => it.text === '105' || it.text === '-4').length, 0, 0);
+  eq('fixed leg covers', OP.covers(fx).join() === '0,4,5' ? 1 : 0, 1, 0);
+  eq('non-fixed leg covers all XXX', OP.covers(mkLog(2)).join() === '0,1,2,3,4,5' ? 1 : 0, 1, 0);
+  eq('non-fixed leg prints GS and WCA', OP.layout(mkLog(2), hdr).filter((it) => it.text === '105' || it.text === '-4').length >= 2 ? 1 : 0, 1, 0);
+  // long name truncated to the cell
+  const LL = OP.layout({ rows: [mkRow(0, { name: 'A'.repeat(30), ident: 'A'.repeat(30) })], totals: { eet: 7, trip: 1.5 } }, hdr);
+  const ln = LL.find((it) => /^A+$/.test(it.text));
+  eq('long WPT name fits cell', ln.text.length * ln.size * 0.5 <= OP.cell('left', 0, 'wpt', 0).x1 - OP.cell('left', 0, 'wpt', 0).x0 ? 1 : 0, 1, 0);
+  console.log((ln.text.length < 30 ? 'ok   ' : 'FAIL ') + 'long WPT name truncated'); if (ln.text.length >= 30) fail++;
+  // wind error leg and non-finite values: never NaN/undefined
+  const bad = { rows: [mkRow(0, { error: 'wind', gs: NaN, wca: undefined, eet: NaN, legFuel: NaN, plFuel: NaN, minFuel: NaN, pto: undefined, dist: Infinity }), mkRow(1, { mc: NaN, alt: undefined, msa: null })], totals: { eet: NaN, trip: NaN } };
+  const hb = Object.assign({}, hdr, { cruiseFf: NaN, takeoffFuel: undefined, magWind: 'NaN/undefined' });
+  const bad_it = OP.layout(bad, hb).filter((it) => /NaN|undefined|Infinity/.test(it.text));
+  eq('no NaN/undefined text items', bad_it.length, 0, 0);
+  const nan_it = L18.filter((it) => /NaN|undefined/.test(it.text));
+  eq('no NaN/undefined in normal log', nan_it.length, 0, 0);
+  eq('remarks T&G', OP.layout({ rows: [mkRow(0, { pattern: { touchGo: 3, taxiBack: 0, fullStop: true, airwork: 20 } })], totals: {} }, hdr).filter((it) => /T&G \(3\)|AIRWORK|Full stop/.test(it.text)).length >= 2 ? 1 : 0, 1, 0);
+  // fpl
+  const xml = OP.fpl([
+    { name: 'KGYR', ident: 'KGYR', lat: 33.4225, lon: -112.376, type: 'AIRPORT' },
+    { name: 'Sun Valley Rd', ident: '', lat: 33.35, lon: -112.5333, type: 'USER WAYPOINT' },
+    { name: 'KE63', ident: 'KE63', lat: 33.3, lon: -112.0, type: 'AIRPORT' },
+  ]);
+  eq('fpl waypoint count', (xml.match(/<waypoint>/g) || []).length, 3, 0);
+  eq('fpl route-point count', (xml.match(/<route-point>/g) || []).length, 3, 0);
+  console.log((xml.includes('xmlns="http://www8.garmin.com/xmlschemas/FlightPlan/v1"') ? 'ok   ' : 'FAIL ') + 'fpl namespace'); if (!xml.includes('FlightPlan/v1')) fail++;
+  const uid = (xml.match(/<identifier>([^<]*)<\/identifier>/g) || [])[1].replace(/<[^>]+>/g, '');
+  eq('fpl user id <= 6 chars', uid.length <= 6 && /^[A-Z0-9]+$/.test(uid) ? 1 : 0, 1, 0);
+  // two user points with colliding ids stay unique
+  const x2 = OP.fpl([{ name: 'Sun Valley A', lat: 33.1, lon: -112.1, type: 'USER WAYPOINT' }, { name: 'Sun Valley B', lat: 33.2, lon: -112.2, type: 'USER WAYPOINT' }]);
+  const ids2 = (x2.match(/<identifier>([^<]*)<\/identifier>/g) || []);
+  eq('colliding user ids unique', new Set(ids2).size, 2, 0);
+  console.log((OP.routeString([{ ident: 'KGYR', type: 'AIRPORT', lat: 33.4, lon: -112.7 }, { lat: 33.35, lon: -112.5333, type: 'USER WAYPOINT' }, { ident: 'KE63', type: 'AIRPORT', lat: 33.3, lon: -112 }]) === 'KGYR 3321N/11232W KE63' ? 'ok   ' : 'FAIL ') + 'routeString'); 
+  if (OP.routeString([{ lat: 33.35, lon: -112.5333, type: 'USER WAYPOINT' }]) !== '3321N/11232W') fail++;
+}
+// PDF build is async and test.js exits synchronously, so run it in a child process
+{
+  const out = require('child_process').execFileSync(process.execPath, ['-e', "require('./ofpprint.js').buildPdf({ rows: [{ name: 'KGYR', alt: 2700, msa: 3000, mc: 90, dist: 10, wca: 0, gs: 100, eet: 6, pto: '1012', legFuel: 1.2, plFuel: 53.3, minFuel: 10, pattern: { touchGo: 3 } }], totals: { eet: 6, trip: 1.2 } }, { from: 'KGYR', to: 'KGYR' }).then((b) => console.log(b.length + ' ' + Buffer.from(b.slice(0, 4)).toString()))"], { cwd: __dirname }).toString().trim().split(' ');
+  const ok = +out[0] > 10000 && out[1] === '%PDF';
+  console.log((ok ? 'ok   ' : 'FAIL ') + 'OFP buildPdf bytes ' + out.join(' ')); if (!ok) fail++;
+}
+// ==== end print ====
+// ==== ffurl tests (OFP) ====
+{
+  const OPF = require('./ofpprint.js');
+  const streq = (name, got, want) => { const ok = got === want; if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + ' got ' + got + ' want ' + want); };
+  const etd = new Date(Date.UTC(2026, 10, 24, 17, 5, 0));
+  const kgyr = { type: 'AIRPORT', ident: 'KGYR', lat: 33.4, lon: -112.4 };
+  const pt = { type: 'USER WAYPOINT', ident: null, lat: 33.4225, lon: -112.3760 };
+  const e63 = { type: 'AIRPORT', ident: 'E63', lat: 33.3, lon: -112.2 };
+  const full = { tas: 152, ff: 12.8, alt: 6500, aircraft: 'var-848', etd };
+  const P = 'foreflightmobile://maps/search?q=';
+  streq('ff url full', OPF.foreflightUrl([kgyr, pt, e63], full), P + 'KGYR+332521N%2F1122234W+E63+152kts+12.8gph+6500ft+VAR848+20261124T17%3A05%3A00Z');
+  streq('ff url ff 13.0 drops .0', OPF.foreflightUrl([kgyr], { tas: 100, ff: 13.0 }), P + 'KGYR+100kts+13gph');
+  streq('ff url only waypoints when opts missing', OPF.foreflightUrl([kgyr, e63], {}), P + 'KGYR+E63');
+  streq('ff url no opts', OPF.foreflightUrl([kgyr, e63]), P + 'KGYR+E63');
+  streq('ff url seconds carry to degrees', OPF.foreflightUrl([{ type: 'USER WAYPOINT', lat: 33.999999, lon: 10 }], {}), P + '340000N%2F0100000E');
+  streq('ff url southern/eastern hemisphere', OPF.foreflightUrl([{ type: 'USER WAYPOINT', lat: -33.5, lon: 151.25 }], {}), P + '333000S%2F1511500E');
+  streq('ff url collapses consecutive duplicates', OPF.foreflightUrl([kgyr, kgyr, e63, e63, kgyr], {}), P + 'KGYR+E63+KGYR');
+}
+// ==== end ffurl ====
+// ==== tfrxml tests (OFP) ====
+{
+  const { parseTfrXml, parseLatLon } = require('./lib/tfrxml.js');
+  const awv = require('./api/aw/[ep].js').validate;
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  // trimmed from FAA detail_6_9784.xml (circle) and detail_6_9736.xml (polygon with a CWA arc, pre-expanded in abdMergedArea)
+  const CIRCLE = `<XNOTAM-Update><Group><Add><Not><NotUid><dateIndexYear>2026</dateIndexYear><noSeqNo>9784</noSeqNo></NotUid>
+    <dateEffective>2026-11-25T19:11:00</dateEffective><dateExpire>2026-11-25T23:30:00</dateExpire>
+    <AffLocGroup><txtNameCity>Goldsboro</txtNameCity><txtNameUSState>NORTH CAROLINA</txtNameUSState></AffLocGroup>
+    <TfrNot><TFRAreaGroup><aseTFRArea><txtName>Area A</txtName>
+      <codeDistVerUpper>HEI</codeDistVerUpper><valDistVerUpper>1000</valDistVerUpper><uomDistVerUpper>FT</uomDistVerUpper>
+      <codeDistVerLower>HEI</codeDistVerLower><valDistVerLower>0</valDistVerLower><uomDistVerLower>FT</uomDistVerLower></aseTFRArea>
+    <abdMergedArea><Avx><codeType>GRC</codeType><geoLat>35.42166667N</geoLat><geoLong>078.05638889W</geoLong></Avx>
+      <Avx><codeType>GRC</codeType><geoLat>35.41166667N</geoLat><geoLong>078.03888889W</geoLong></Avx>
+      <Avx><codeType>GRC</codeType><geoLat>35.40166667N</geoLat><geoLong>078.05638889W</geoLong></Avx></abdMergedArea>
+    <aseShapes><Abd><Avx><codeType>CIR</codeType><geoLat>35.41166667N</geoLat><geoLong>078.05638889W</geoLong><codeDatum>WGE</codeDatum>
+      <valRadiusArc>1.0</valRadiusArc><uomRadiusArc>NM</uomRadiusArc></Avx></Abd></aseShapes></TFRAreaGroup></TfrNot>
+    <txtDescrUSNS>!FDC 6/9784 ZDC NC..AIRSPACE GOLDSBORO, NC..TEMPORARY FLIGHT RESTRICTIONS. WI AN AREA DEFINED AS 1NM RADIUS OF 352442N0780323W SFC-1000FT AGL</txtDescrUSNS>
+    </Not></Add></Group></XNOTAM-Update>`;
+  const POLY = `<XNOTAM-Update><Group><Add><Not><NotUid><dateIndexYear>2026</dateIndexYear><noSeqNo>9736</noSeqNo></NotUid>
+    <dateEffective>2026-11-29T13:00:00</dateEffective><dateExpire>2026-11-30T06:00:00</dateExpire>
+    <AffLocGroup><txtNameCity>Libby AAF</txtNameCity></AffLocGroup>
+    <TfrNot><TFRAreaGroup><aseTFRArea><txtName>Area A</txtName>
+      <codeDistVerUpper>ALT</codeDistVerUpper><valDistVerUpper>17999</valDistVerUpper><uomDistVerUpper>FT</uomDistVerUpper>
+      <codeDistVerLower>ALT</codeDistVerLower><valDistVerLower>9000</valDistVerLower><uomDistVerLower>FT</uomDistVerLower></aseTFRArea>
+    <abdMergedArea><Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.56805556N</geoLat><geoLong>110.19333333W</geoLong></Avx>
+      <Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.58694444N</geoLat><geoLong>110.50555556W</geoLong></Avx>
+      <Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.59850202N</geoLat><geoLong>110.50360473W</geoLong></Avx>
+      <Avx><codeDatum>WGE</codeDatum><codeType>GRC</codeType><geoLat>31.56805556N</geoLat><geoLong>110.19333333W</geoLong></Avx></abdMergedArea>
+    <aseShapes><Abd><Avx><codeType>GRC</codeType><geoLat>31.56805556N</geoLat><geoLong>110.19333333W</geoLong></Avx>
+      <Avx><codeType>GRC</codeType><geoLat>31.58694444N</geoLat><geoLong>110.50555556W</geoLong></Avx>
+      <Avx><codeType>CWA</codeType><geoLatArc>31.5775N</geoLatArc><geoLongArc>110.34944444W</geoLongArc><valRadiusArc>8.0</valRadiusArc><uomRadiusArc>NM</uomRadiusArc></Avx></Abd></aseShapes>
+    </TFRAreaGroup></TfrNot></Not></Add></Group></XNOTAM-Update>`;
+  tst('parseLatLon N', parseLatLon('33.5N') === 33.5);
+  tst('parseLatLon W', parseLatLon('112.25W') === -112.25);
+  tst('parseLatLon padded W', parseLatLon('079.79166667W') === -79.79166667);
+  tst('parseLatLon S', parseLatLon('12.5S') === -12.5);
+  tst('parseLatLon bad', isNaN(parseLatLon('abc')));
+  const c = parseTfrXml(CIRCLE, { notamId: '6/9784', state: 'NC', description: 'Goldsboro, NC', type: 'SECURITY' });
+  tst('circle parsed', c && c.shapes.length === 1 && c.shapes[0].kind === 'circle', JSON.stringify(c));
+  if (c) {
+    tst('circle center', near(c.shapes[0].lat, 35.41166667) && near(c.shapes[0].lon, -78.05638889), JSON.stringify(c.shapes[0]));
+    tst('circle radius NM', c.shapes[0].radiusNm === 1);
+    tst('circle alt SFC-1000 AGL', c.floorFt === 0 && c.ceilFt === 1000 && c.agl === true, JSON.stringify([c.floorFt, c.ceilFt, c.agl]));
+    tst('circle times (UTC)', c.from === '2026-11-25T19:11:00Z' && c.to === '2026-11-25T23:30:00Z', c.from + ' ' + c.to);
+    tst('circle meta', c.id === '6/9784' && c.state === 'NC' && c.type === 'SECURITY' && c.name === 'Goldsboro' && /GOLDSBORO/.test(c.text) && c.text.length <= 300);
+  }
+  const p = parseTfrXml(POLY, { notamId: '6/9736', state: 'AZ' });
+  tst('poly parsed', p && p.shapes.length === 1 && p.shapes[0].kind === 'poly' && p.shapes[0].pts.length === 4, JSON.stringify(p));
+  if (p) {
+    tst('poly vertex sign/decimals', near(p.shapes[0].pts[0][0], 31.56805556) && near(p.shapes[0].pts[0][1], -110.19333333) && near(p.shapes[0].pts[1][1], -110.50555556));
+    tst('poly alt MSL', p.floorFt === 9000 && p.ceilFt === 17999 && !p.agl);
+    tst('poly times', p.from === '2026-11-29T13:00:00Z' && p.to === '2026-11-30T06:00:00Z');
+  }
+  // arc fallback: no merged outline, CWA arc expanded to points every ~10 degrees
+  const arc = parseTfrXml(POLY.replace(/<abdMergedArea>[\s\S]*<\/abdMergedArea>/, ''), {});
+  tst('arc fallback adds points', arc && arc.shapes[0].kind === 'poly' && arc.shapes[0].pts.length > 4, arc && arc.shapes[0].pts.length);
+  if (arc) {
+    const d = pt => Math.hypot((pt[0] - 31.5775) * 60, (pt[1] + 110.34944444) * 60 * Math.cos(31.5775 * Math.PI / 180));
+    tst('arc points on 8 NM radius', arc.shapes[0].pts.slice(2).every(pt => Math.abs(d(pt) - 8) < 0.3), JSON.stringify(arc.shapes[0].pts.slice(2).map(d)));
+  }
+  const fl = parseTfrXml(POLY.replace('<valDistVerUpper>17999</valDistVerUpper><uomDistVerUpper>FT', '<valDistVerUpper>180</valDistVerUpper><uomDistVerUpper>FL'), {});
+  tst('FL x100', fl && fl.ceilFt === 18000);
+  tst('garbage -> null', parseTfrXml('hello') === null && parseTfrXml('') === null && parseTfrXml(null) === null && parseTfrXml(undefined) === null && parseTfrXml(42) === null);
+  tst('no geometry -> null', parseTfrXml('<XNOTAM-Update><TFRAreaGroup><aseTFRArea></aseTFRArea></TFRAreaGroup>' + ' '.repeat(60) + '</XNOTAM-Update>') === null);
+  // aw relay param validation
+  const V = (ep, qs) => awv(ep, new URLSearchParams(qs));
+  tst('aw metar ok', V('metar', 'ids=ksef&hours=3').toString() === 'ids=KSEF&hours=3&format=json', String(V('metar', 'ids=ksef&hours=3')));
+  tst('aw taf drops hours', V('taf', 'ids=KSEF&hours=3').toString() === 'ids=KSEF&format=json');
+  tst('aw metar needs ids', V('metar', '') === null && V('metar', 'ids=K') === null && V('metar', 'ids=KSEF&hours=49') === null && V('metar', 'ids=KSEF&hours=x') === null);
+  tst('aw unknown ep', V('foo', 'ids=KSEF') === null && V('constructor', '') === null);
+  tst('aw airsigmet/cwa no params', V('airsigmet', '').toString() === 'format=json' && V('cwa', 'junk=1').toString() === 'format=json');
+  tst('aw gairmet type', V('gairmet', 'type=tango').toString() === 'type=tango&format=json' && V('gairmet', 'type=Tango') === null && V('gairmet', '') === null && V('gairmet', 'type=alpha') === null);
+  tst('aw pirep ok', V('pirep', 'bbox=30,-115,36,-108').toString() === 'bbox=30%2C-115%2C36%2C-108&age=3&format=json', String(V('pirep', 'bbox=30,-115,36,-108')));
+  tst('aw pirep age', V('pirep', 'bbox=30.5,-115.25,36,-108&age=6') !== null && V('pirep', 'bbox=30,-115,36,-108&age=7') === null && V('pirep', 'bbox=30,-115,36,-108&age=0') === null);
+  tst('aw pirep bad bbox', V('pirep', '') === null && V('pirep', 'bbox=30,-115,36') === null && V('pirep', 'bbox=36,-115,30,-108') === null
+    && V('pirep', 'bbox=30,-108,36,-115') === null && V('pirep', 'bbox=10,-115,20,-108') === null && V('pirep', 'bbox=30,-115,36,-50') === null
+    && V('pirep', 'bbox=20,-130,40,-110') === null && V('pirep', 'bbox=a,b,c,d') === null);
+  // nearest-TAF fallback: relay accepts a small bbox for taf, data layer picks the nearest within 50 NM
+  tst('aw taf bbox ok', V('taf', 'bbox=32.57,-113.23,34.27,-111.53').toString() === 'bbox=32.57%2C-113.23%2C34.27%2C-111.53&format=json');
+  tst('aw taf bbox too big / bad', V('taf', 'bbox=30,-115,34,-111') === null && V('taf', 'bbox=34,-113,33,-112') === null && V('taf', 'bbox=x') === null);
+  const OD = require('./ofpdata.js'), gyr = { lat: 33.4225, lon: -112.376 };
+  const tafs = [{ icaoId: 'KPHX', lat: 33.42779, lon: -112.00366 }, { icaoId: 'KLUF', lat: 33.538, lon: -112.38 }, { icaoId: 'KXXX', lat: 'x', lon: null }];
+  const nt = OD.nearestTaf(tafs, gyr, 50);
+  tst('nearest TAF to KGYR is KLUF ~7 NM', nt && nt.id === 'KLUF' && nt.distNm === 7, JSON.stringify(nt && { id: nt.id, d: nt.distNm }));
+  tst('nearest TAF none within radius', OD.nearestTaf(tafs, { lat: 36, lon: -112 }, 50) === null && OD.nearestTaf(null, gyr, 50) === null);
+}
+// ==== end tfrxml ====
+// ==== safety tests (OFP) ====
+{
+  const Nav = require('./nav.js'), S = require('./safety.js');
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  // interpWind on model levels (alt ft MSL; temp may be missing on a level)
+  const PH = [{ alt: 3000, dir: 210, spd: 13, temp: null }, { alt: 6000, dir: 230, spd: 25, temp: 17 }, { alt: 9000, dir: 240, spd: 31, temp: 10 }];
+  const w45 = S.interpWind(PH, 4500);
+  eq('interpWind 4500 dir', w45.dir, 220, 3); eq('interpWind 4500 spd', w45.spd, 19, 1); eq('interpWind 4500 temp (lapse below 6000)', w45.temp, 20, 0.5);
+  eq('interpWind exact level', S.interpWind(PH, 6000).spd, 25, 0);
+  eq('interpWind below lowest holds 3000', S.interpWind(PH, 1500).spd, 13, 0);
+  eq('interpWind 350/010 averages to north', Math.abs(Nav.angDiff(S.interpWind([{ alt: 3000, dir: 350, spd: 20 }, { alt: 6000, dir: 10, spd: 20 }], 4500).dir, 0)), 0, 1);
+  tst('interpWind of nothing is null', S.interpWind({}, 5000) === null && S.interpWind(null, 5000) === null && S.interpWind([], 5000) === null);
+
+  // altitude profile
+  const pr = S.legProfile([{ dist: 30, alt: 5500, prevAlt: 2700 }, { dist: 30, alt: 1600, prevAlt: 6500, last: true }, { dist: 5, alt: 9500, prevAlt: 2700 }]);
+  eq('climb leg: TOC at', pr[0][0].distTo, Nav.tocNm(2700, 5500), 0.01); eq('climb leg: level after TOC', pr[0][1].altFrom, 5500, 0);
+  eq('last leg: descent starts at TOD', pr[1][1].distFrom, 30 - Nav.todNm(6500, 1600), 0.01); eq('last leg: descent ends at TPA', pr[1][1].altTo, 1600, 0);
+  tst('short leg: climb does not finish, altitude interpolated', pr[2][0].distTo === 5 && pr[2][0].altTo < 9500 && pr[2][0].altTo > 2700);
+  eq('altAt mid-climb', S.altAt(pr[0], Nav.tocNm(2700, 5500) / 2), 4100, 1);
+
+  // airspace: a Class B shelf 3000-9000 ft over a square
+  const A0 = { lat: 33.00, lon: -112.00 }, B0 = { lat: 33.00, lon: -111.50 };      // about 25 NM east
+  const sq = [[32.9, -111.9], [32.9, -111.6], [33.1, -111.6], [33.1, -111.9]];
+  const shelf = { name: 'TEST CLASS B', cls: 'B', lowerFt: 3000, upperFt: 9000, lowerRef: 'MSL', rings: [sq] };
+  const lenAB = Nav.dist(A0, B0);
+  const low = S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 2500, prevAlt: 2500, last: false }])[0], [shelf]);
+  tst('2500 ft under the shelf', low.length === 1 && low[0].kind === 'under-shelf' && low[0].cls === 'B', JSON.stringify(low));
+  const mid = S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 5500, prevAlt: 5500, last: false }])[0], [shelf]);
+  tst('5500 ft inside the shelf', mid.length === 1 && mid[0].kind === 'inside' && mid[0].fromNm > 5 && mid[0].toNm < 20, JSON.stringify(mid));
+  const high = S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 9500, prevAlt: 9500, last: false }])[0], [shelf]);
+  eq('9500 ft over the shelf: no conflict', high.length, 0, 0);
+  const sfcD = { name: 'TEST D', cls: 'D', lowerFt: 0, upperFt: 3000, lowerRef: 'SFC', rings: [sq] };
+  eq('class D at 2500 ft: inside', S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 2500, prevAlt: 2500, last: false }])[0], [sfcD])[0].kind === 'inside' ? 1 : 0, 1, 0);
+  const aglMoa = { name: 'TEST MOA', cls: 'MOA', lowerFt: 500, upperFt: 6500, lowerRef: 'SFC', rings: [sq] };
+  eq('MOA with 500 AGL floor, flying 4000 with ground 3000', S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 4000, prevAlt: 4000, last: false }])[0], [aglMoa], { groundFt: 3000 }).length, 1, 0);
+  eq('MOA with 500 AGL floor, flying 2000 with ground 3000: below floor', S.airspaceConflicts(A0, B0, S.legProfile([{ dist: lenAB, alt: 2000, prevAlt: 2000, last: false }])[0], [aglMoa], { groundFt: 3000 }).length, 0, 0);
+  eq('no airspace data gives no conflicts', S.airspaceConflicts(A0, B0, [], []).length + S.airspaceConflicts(A0, B0, [], null).length, 0, 0);
+  // ADDS attribute semantics, from live features (Class_Airspace PHX Class B Area B; SUA A-231; class E5; class A)
+  const fB = S.fromAddsAirspace({ attributes: { NAME: 'PHOENIX CLASS B', CLASS: 'B', LOCAL_TYPE: 'CLASS_B', UPPER_VAL: 9000, UPPER_UOM: 'FT', UPPER_CODE: 'MSL', LOWER_VAL: 3000, LOWER_UOM: 'FT', LOWER_CODE: 'MSL' }, geometry: { rings: [[[-112.1, 33.4], [-112.0, 33.4], [-112.0, 33.5]]] } }, 'class');
+  tst('ADDS class B floor/ceiling', fB && fB.cls === 'B' && fB.lowerFt === 3000 && fB.upperFt === 9000 && fB.lowerRef === 'MSL' && fB.rings[0][0][0] === 33.4 && fB.rings[0][0][1] === -112.1);
+  const fS = S.fromAddsAirspace({ attributes: { NAME: 'A-231', TYPE_CODE: 'A', UPPER_VAL: '6500', UPPER_UOM: 'FT', UPPER_CODE: 'MSL', LOWER_VAL: '500', LOWER_UOM: 'FT', LOWER_CODE: 'SFC' }, geometry: { rings: [[[-112.1, 33.4], [-112.0, 33.4], [-112.0, 33.5]]] } }, 'sua');
+  tst('ADDS SUA alert area, string values, 500 AGL', fS && fS.cls === 'ALERT' && fS.lowerFt === 500 && fS.lowerRef === 'SFC' && fS.upperFt === 6500);
+  eq('ADDS surface floor', S.fromAddsAirspace({ attributes: { NAME: 'PHOENIX MODE C', LOCAL_TYPE: 'MODE C', CLASS: null, UPPER_VAL: 10000, UPPER_UOM: 'FT', UPPER_CODE: 'MSL', LOWER_VAL: 0, LOWER_UOM: 'FT', LOWER_CODE: 'SFC' }, geometry: { rings: [[[-112, 33], [-111, 33], [-111, 34]]] } }, 'class').cls === 'MODEC' ? 1 : 0, 1, 0);
+  eq('ADDS FL600 ceiling', S.addsAlt(600, 'FL', 'STD'), 60000, 0); eq('ADDS -9998 is unlimited', S.addsAlt(-9998, null, null), S.UNLIMITED, 0);
+  tst('ADDS feature without geometry is skipped', S.fromAddsAirspace({ attributes: { NAME: 'X', CLASS: 'B' } }, 'class') === null);
+
+  // glide reach
+  const g0 = S.glide(A0, B0, 5500, []);
+  tst('glide with no fields: one gap over the whole leg', g0.fields.length === 0 && g0.gaps.length === 1 && g0.gaps[0].fromNm === 0 && Math.abs(g0.gaps[0].toNm - lenAB) < 0.2, JSON.stringify(g0));
+  const apt = { ident: 'KTST', lat: 33.0, lon: -111.75, elev: 1000 };    // mid-leg; reach at 5500 ft = 4500/6076*9*0.8 = 5.3 NM
+  const g1 = S.glide(A0, B0, 5500, [apt]);
+  tst('glide with one field: field listed and gaps either side', g1.fields.length === 1 && g1.fields[0].ident === 'KTST' && Math.abs(g1.fields[0].distNm - lenAB / 2) < 1.1 && g1.gaps.length === 2, JSON.stringify(g1));
+  eq('glide high enough covers the leg', S.glide(A0, B0, 12500, [apt]).gaps.length, 0, 0);
+  eq('glide with null fields', S.glide(A0, B0, 5500, null).gaps.length, 1, 0);
+
+  // terrain / obstacles
+  const t = S.tileOf(33.4343, -112.0116, 11);
+  const back = S.tilePixelLatLon(11, t.x, t.y, t.px, t.py);
+  eq('tile round-trip lat', back.lat, 33.4343, 1e-6); eq('tile round-trip lon', back.lon, -112.0116, 1e-6);
+  eq('Terrarium 0 m', S.terrainFt(128, 0, 0), 0, 1e-6); eq('Terrarium 1000 m in ft', S.terrainFt(131, 232, 0), 1000 * 3.28084, 0.01);
+  const ptsC = S.corridorPoints(A0, B0, 5, 0.5, 1);
+  tst('corridor points all within 5 NM of the leg', ptsC.length > 100 && ptsC.every((p) => Nav.xtrack(p, A0, B0) <= 5 + 1e-6));
+  const tile = new Uint8ClampedArray(256 * 256 * 4); for (let i = 0; i < 256 * 256; i++) { tile[i * 4] = 128; tile[i * 4 + 1] = 100; tile[i * 4 + 3] = 255; } // 100 m everywhere
+  const pk = S.tileOf(33.0, -111.75, 11); const pi = (Math.min(255, Math.floor(pk.py)) * 256 + Math.min(255, Math.floor(pk.px))) * 4; tile[pi + 1] = 200; // 200 m peak
+  const mt = S.maxTerrain([{ lat: 33.0, lon: -111.75 }], 11, () => tile);
+  eq('maxTerrain finds the peak', mt.ft, 200 * 3.28084, 1); eq('maxTerrain lat near the peak', mt.lat, 33.0, 0.003);
+  const mm = S.maxTerrain([{ lat: 33, lon: -111.75 }], 11, () => null);
+  tst('maxTerrain with a missing tile is null ft, not 0', mm && mm.ft === null && mm.missing === 1);
+  eq('maxTerrain with no points', S.maxTerrain([], 11, () => tile) === null ? 1 : 0, 1, 0);
+  const me = S.maxElevation({ ft: 4512, lat: 33, lon: -111.8 }, [{ lat: 33.02, lon: -111.7, amsl: 5100 }, { lat: 34.5, lon: -111.7, amsl: 9000 }], A0, B0, 5);
+  tst('maxElevation: obstacle near the leg wins, far one ignored', me.kind === 'obstacle' && me.ft === 5100 && me.msa === 6500, JSON.stringify(me));
+  eq('maxElevation terrain only: 4512 -> MSA 6000', S.maxElevation({ ft: 4512, lat: 1, lon: 1 }, [], A0, B0).msa, 6000, 0);
+  eq('maxElevation with no data is null', S.maxElevation(null, [], A0, B0) === null && S.maxElevation({ ft: null }, null, A0, B0) === null ? 1 : 0, 1, 0);
+
+  // checks
+  const LATA = require('./airports.js');
+  const mkRow = (o) => Object.assign({ name: 'WP', ident: '', dist: 10, mc: 90, alt: 3500, msa: 3000, plFuel: 40, minFuel: 10, fixed: null }, o);
+  const codes = (cs) => cs.map((c) => c.code + (c.leg === null ? '' : '@' + c.leg));
+  let cs = S.checks({ log: { rows: [mkRow({ dist: 35 })] } });
+  tst('35 NM leg gives leg30', codes(cs).includes('leg30@0'), codes(cs).join());
+  cs = S.checks({ log: { rows: [mkRow({ mc: 270, alt: 5500 })] } });
+  tst('5500 ft westbound gives semicircular', codes(cs).includes('semicircular@0'), codes(cs).join());
+  tst('5500 ft eastbound is fine', !codes(S.checks({ log: { rows: [mkRow({ mc: 90, alt: 5500 })] } })).includes('semicircular@0'));
+  tst('wrap: MC 358 is westbound (even): 5500 warns, 6500 fine', codes(S.checks({ log: { rows: [mkRow({ mc: 358, alt: 5500 })] } })).includes('semicircular@0') && !codes(S.checks({ log: { rows: [mkRow({ mc: 358, alt: 6500 })] } })).includes('semicircular@0'));
+  tst('wrap: MC 002 is eastbound (odd): 5500 fine, 6500 warns', !codes(S.checks({ log: { rows: [mkRow({ mc: 2, alt: 5500 })] } })).includes('semicircular@0') && codes(S.checks({ log: { rows: [mkRow({ mc: 2, alt: 6500 })] } })).includes('semicircular@0'));
+  tst('low altitude is exempt (3500 AGL rule)', !codes(S.checks({ log: { rows: [mkRow({ mc: 270, alt: 3500 })] }, rows: [mkRow({ groundFt: 1000 })] })).includes('semicircular@0'));
+  tst('below MSA', codes(S.checks({ log: { rows: [mkRow({ alt: 3500, msa: 6000 })] } })).includes('belowMsa@0'));
+  cs = S.checks({ log: { rows: [mkRow({})] }, sources: { terrain: { ok: false }, airspace: { ok: true } } });
+  tst('terrain unavailable gives dataMissing and only that source', codes(cs).filter((c) => c === 'dataMissing').length === 1 && /Terrain/.test(cs.find((c) => c.code === 'dataMissing').text), codes(cs).join());
+  tst('wind error row gives windErr', codes(S.checks({ log: { rows: [mkRow({ error: 'wind', gs: null, eet: null })] } })).includes('windErr@0'));
+  tst('18+ legs gives legs18, 18 does not', codes(S.checks({ log: { rows: Array.from({ length: 19 }, () => mkRow({})) } })).includes('legs18') && !codes(S.checks({ log: { rows: Array.from({ length: 18 }, () => mkRow({})) } })).includes('legs18'));
+  tst('fuel over 56 and under reserve', (() => { const c = codes(S.checks({ log: { rows: [mkRow({ plFuel: 5, minFuel: 10 })] }, takeoffFuel: 57 })); return c.includes('fuelUsable') && c.includes('fuelReserve@0'); })());
+  tst('airspace conflict becomes warn, shelf becomes info', (() => {
+    const c = S.checks({ log: { rows: [mkRow({})] }, conflicts: [[{ name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 3000, upperFt: 9000, lowerRef: 'MSL', fromNm: 2, toNm: 6, kind: 'inside' }, { name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 7000, upperFt: 9000, lowerRef: 'MSL', fromNm: 6, toNm: 8, kind: 'under-shelf' }]] });
+    return c.filter((x) => x.code === 'airspace').map((x) => x.level).join() === 'warn,info';
+  })());
+  tst('glide gap becomes glideGap', codes(S.checks({ log: { rows: [mkRow({})] }, glide: [{ fields: [], gaps: [{ fromNm: 1, toNm: 4 }] }] })).includes('glideGap@0'));
+  // noise reduction: Mode C once, surface areas as info, one line per leg and class, small glide gaps as info
+  const inB = (a, b, f, t2, lo) => ({ name: 'PHOENIX CLASS B', cls: 'B', lowerFt: lo, upperFt: 9000, lowerRef: lo === 0 ? 'SFC' : 'MSL', fromNm: f, toNm: t2, kind: 'inside' });
+  const modec = { name: 'PHOENIX SKY HARBOR INTERNATIONAL MODE C', cls: 'MODEC', lowerFt: 0, upperFt: 10000, lowerRef: 'SFC', fromNm: 0, toNm: 9, kind: 'inside' };
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, conflicts: [[modec], [modec]] });
+  tst('Mode C veil: one info line, no warnings', cs.filter((c) => c.code === 'modeC').length === 1 && cs.filter((c) => c.level === 'warn').length === 0 && cs.filter((c) => c.code === 'airspace').length === 0, codes(cs).join());
+  const gyrD = { name: 'PHOENIX-GOODYEAR MUNICIPAL AIRPORT CLASS D', cls: 'D', lowerFt: 0, upperFt: 3000, lowerRef: 'SFC', fromNm: 0, toNm: 3, kind: 'inside', ap: 'KGYR' };
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, airports: LATA, dep: 'KGYR', dest: 'KGEU', conflicts: [[gyrD], []] });
+  tst('departure surface area is one info', cs.filter((c) => c.code === 'terminal').length === 1 && cs.find((c) => c.code === 'terminal').level === 'info' && !codes(cs).includes('airspace@0') && /Departure in KGYR Class D/.test(cs.find((c) => c.code === 'terminal').text), JSON.stringify(cs.filter((c) => c.code === 'terminal')));
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, airports: LATA, dep: 'KGEU', dest: 'KGYR', conflicts: [[], [gyrD]] });
+  tst('arrival surface area is one info', cs.filter((c) => c.code === 'terminal').length === 1 && /Arrival in KGYR/.test(cs.find((c) => c.code === 'terminal').text));
+  cs = S.checks({ log: { rows: [mkRow({}), mkRow({})] }, airports: LATA, dep: 'KGEU', dest: 'KGEU', conflicts: [[], [gyrD]] });
+  tst('surface area of another airport mid-route still warns', cs.some((c) => c.code === 'airspace' && c.level === 'warn'));
+  const tagged = S.airspaceConflicts({ lat: 33, lon: -112.0 }, { lat: 33, lon: -112.1 }, S.legProfile([{ dist: Nav.dist({ lat: 33, lon: -112.0 }, { lat: 33, lon: -112.1 }), alt: 2000, prevAlt: 2000, last: false }])[0],
+    [{ name: 'SOME CLASS D', cls: 'D', lowerFt: 0, upperFt: 3000, lowerRef: 'SFC', rings: [[[32.9, -112.2], [33.1, -112.2], [33.1, -111.9], [32.9, -111.9]]] }], { airports: [{ ident: 'KXYZ', lat: 33.0, lon: -112.05 }] });
+  tst('airspaceConflicts tags a conflict whose polygon holds the airport', tagged.length === 1 && tagged[0].ap === 'KXYZ');
+  cs = S.checks({ log: { rows: [mkRow({})] }, conflicts: [[inB(0, 0, 7.2, 14, 4000), inB(0, 0, 14.4, 19, 3000), inB(0, 0, 19.4, 31.3, 0),
+    { name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 7000, upperFt: 9000, lowerRef: 'MSL', fromNm: 0, toNm: 4, kind: 'under-shelf' }, { name: 'PHOENIX CLASS B', cls: 'B', lowerFt: 6000, upperFt: 9000, lowerRef: 'MSL', fromNm: 4.2, toNm: 7, kind: 'under-shelf' }]] });
+  const asx = cs.filter((c) => c.code === 'airspace');
+  tst('one warn per leg and class with merged floors, one shelf info', asx.length === 2 && asx[0].level === 'warn' && /7\.2-31\.3 NM \(floors 4000\/3000\/SFC\)/.test(asx[0].text) && asx[1].level === 'info' && /lowest floor 6000/.test(asx[1].text), JSON.stringify(asx));
+  tst('glide gap under 3 NM is info, 3 NM or more is warn', S.checks({ log: { rows: [mkRow({})] }, glide: [{ fields: [], gaps: [{ fromNm: 1, toNm: 3.5 }] }] }).find((c) => c.code === 'glideGap').level === 'info'
+    && S.checks({ log: { rows: [mkRow({})] }, glide: [{ fields: [], gaps: [{ fromNm: 1, toNm: 4 }] }] }).find((c) => c.code === 'glideGap').level === 'warn');
+  cs = S.checks({ log: { rows: [mkRow({})] }, airports: LATA, solo: true, night: true, dep: 'KGYR', dest: 'E63' });
+  tst('KE63 not approved for night VFR', codes(cs).includes('aptNight') && cs.find((c) => c.code === 'aptNight').text.includes('E63'), codes(cs).join());
+  tst('KGYR departure without ATO procedure', codes(cs).includes('noAtoProc@0'));
+  cs = S.checks({ log: { rows: [mkRow({ fixed: { min: 4, nm: 7 } })] }, airports: LATA, solo: true, night: false, dep: 'KGYR', dest: 'KGEU' });
+  tst('KGYR departure with ATO procedure is fine', !codes(cs).includes('noAtoProc@0'));
+  tst('SOW limits are listed as info', codes(S.checks({ log: { rows: [mkRow({})] }, airports: LATA, dest: 'KSOW', dep: 'KGEU', solo: false })).includes('aptLimits'));
+  eq('checks with nothing', S.checks({}).length + S.checks().length, 0, 0);
+
+  // recommender
+  const leg = { a: A0, b: B0, mc: 90, dist: lenAB };
+  const env = { msa: 6000, airspaces: [shelf], winds: () => ({ dir: 90, spd: 20 }), cruise: (alt) => ({ tas: 140 + alt / 1000, ff: 12.7 }), minFt: 3000, maxFt: 12500 };
+  const ra = S.recommendAlts(leg, env);
+  tst('recommender: no altitude below MSA is ok', ra.filter((r) => r.alt < 6000).every((r) => !r.ok) && ra.some((r) => r.alt < 6000));
+  tst('recommender: shelf altitudes rejected, 9500 is the first ok, all semicircular', ra.filter((r) => r.alt < 9000).every((r) => !r.ok) && ra.find((r) => r.ok).alt === 9500 && ra.every((r) => Nav.semicircularOk(90, r.alt, 0)), JSON.stringify(ra.map((r) => r.alt + ':' + r.ok)));
+  const rec = ra.filter((r) => r.rec);
+  tst('recommender: exactly one rec, lowest ok', rec.length === 1 && rec[0].alt === ra.find((r) => r.ok).alt && rec[0].gs > 100 && rec[0].fuel > 0, JSON.stringify(ra.slice(0, 3)));
+  tst('recommender with no data does not throw', S.recommendAlts({ mc: 90, dist: 10 }, {}).every((r) => !r.ok) && Array.isArray(S.recommendAlts(null, null)));
+  tst('recommender: wind too strong is not ok', S.recommendAlts({ mc: 90, dist: 10 }, { cruise: () => ({ tas: 100, ff: 10 }), winds: () => ({ dir: 0, spd: 150 }) }).every((r) => !r.ok));
+}
+// OfpData against a network that is down: every call resolves {ok:false}, never throws, never zero. Child process
+// because test.js exits synchronously.
+{
+  const out = require('child_process').execFileSync(process.execPath, ['-e', `
+    global.fetch = () => Promise.reject(new Error('offline'));
+    const D = require('./ofpdata.js'); const bb = { s: 33.2, w: -112.8, n: 33.7, e: -111.9 };
+    Promise.all([D.airspace(bb), D.airports(bb), D.navaids(bb), D.obstacles(bb), D.terrainMax({ lat: 33.4, lon: -112.7 }, { lat: 33.4, lon: -112.0 }), D.windsAloft({ lat: 33.4, lon: -112, timeMs: Date.now(), altFt: 6000 }), D.airspace(null)])
+      .then((r) => console.log(JSON.stringify(r.map((x) => [x.ok, x.at, x.data === null || (Array.isArray(x.data) && x.data.length === 0)]))));
+  `], { cwd: __dirname }).toString().trim();
+  const r = JSON.parse(out);
+  const allDown = r.length === 7 && r.every((x) => x[0] === false && x[1] === null && x[2] === true);
+  console.log((allDown ? 'ok   ' : 'FAIL ') + 'OfpData offline: all sources ok:false with empty data ' + out); if (!allDown) fail++;
+  const D = require('./ofpdata.js');
+  const u = D._urls.addsUrl('Class_Airspace', { s: 33.2, w: -112.8, n: 33.7, e: -111.9 }, '1=1', 'NAME', 'poly');
+  console.log((/Class_Airspace\/FeatureServer\/0\/query\?/.test(u) && /geometry=-112\.8%2C33\.2%2C-111\.9%2C33\.7/.test(u) && /inSR=4326/.test(u) && /maxAllowableOffset/.test(u) ? 'ok   ' : 'FAIL ') + 'OfpData ADDS query url'); if (!/maxAllowableOffset/.test(u)) fail++;
+  // Open-Meteo pressure levels -> wind (levels at 2.5k/5k/10k/14k ft ~ 762/1500/3050/4270 m)
+  const mk = (gh, d, s, tc) => ({ gh, d, s, tc });
+  const L = { 925: mk(762, 200, 10, 20), 850: mk(1500, 220, 20, 14), 700: mk(3050, 250, 40, 0), 600: mk(4270, 260, 50, -10) };
+  const hourly = { time: [1000, 4600] };
+  [1000, 925, 850, 800, 700, 600, 500].forEach((l) => { const o = L[l]; hourly['wind_speed_' + l + 'hPa'] = o ? [o.s, o.s] : [null, null]; hourly['wind_direction_' + l + 'hPa'] = o ? [o.d, o.d] : [null, null]; hourly['temperature_' + l + 'hPa'] = o ? [o.tc, o.tc] : [null, null]; hourly['geopotential_height_' + l + 'hPa'] = o ? [o.gh, o.gh] : [null, null]; });
+  const ow = D._omWind({ hourly }, 1000 * 1000, 1500 * 3.28084);
+  eq('Open-Meteo wind at a level', ow.spd, 20, 0); eq('Open-Meteo wind dir', ow.dir, 220, 0); eq('Open-Meteo temp', ow.tempC, 14, 0.2);
+  eq('Open-Meteo wind between levels', D._omWind({ hourly }, 1000 * 1000, 2275 * 3.28084).spd, 30, 1.2);
+  eq('Open-Meteo empty response is null', D._omWind({}, 0, 5000) === null && D._omWind(null, 0, 5000) === null ? 1 : 0, 1, 0);
+}
+// ==== end safety ====
+// ==== hazards tests (OFP) ====
+{
+  const tst = (name, ok, extra) => { if (!ok) fail++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ' ' + (extra || ''))); };
+  const S = require('./safety.js');
+  const A = { lat: 33.4225, lon: -112.376 }, B = { lat: 33.4225, lon: -111.376 }; // ~50 NM east along 33.4225N
+  const prof = (alt) => S.legProfile([{ dist: Nav2().dist(A, B), alt, prevAlt: alt, last: false }])[0];
+  function Nav2() { return require('./nav.js'); }
+  const T0 = Date.UTC(2026, 10, 25, 15, 0), T1 = T0 + 3600e3;
+  const mk = (alt) => [{ i: 0, a: A, b: B, profile: prof(alt), startMs: T0, endMs: T1 }];
+  // box around lon -111.9..-111.7 (about 15-25 NM from A)
+  const box = [[33.2, -111.9], [33.2, -111.7], [33.7, -111.7], [33.7, -111.9]];
+  const air = { id: 'A1', kind: 'AIRMET', hazard: 'TURB', sev: 'TANGO', from: T0, to: T1, baseFt: 8000, topFt: 18000, polys: [box], circles: [] };
+  const h = S.hazardHits(mk(9500), [air]);
+  tst('hazard polygon hit', h.length === 1 && h[0].leg === 0 && h[0].item === air, JSON.stringify(h.map((x) => x.firstNm)));
+  tst('hazard firstNm/lastNm plausible', h[0].firstNm > 22 && h[0].firstNm < 27 && h[0].lastNm > 31 && h[0].lastNm < 36 && h[0].minAlt === 9500, h[0].firstNm + '-' + h[0].lastNm);
+  tst('hazard leg above top is clear', S.hazardHits(mk(19500), [air]).length === 0);
+  tst('hazard leg below base is clear', S.hazardHits(mk(5500), [air]).length === 0);
+  tst('hazard outside time window', S.hazardHits(mk(9500), [{ ...air, from: T1 + 3600e3, to: T1 + 7200e3 }]).length === 0);
+  tst('hazard null times and null base/top always apply', S.hazardHits(mk(5500), [{ ...air, from: null, to: null, baseFt: null, topFt: null }]).length === 1);
+  // circle TFR 5 NM radius at lon -111.8
+  const tfr = { id: '6/1234', kind: 'TFR', hazard: 'SPACE', from: null, to: null, baseFt: 0, topFt: 17999, agl: false, polys: [], circles: [{ lat: 33.4225, lon: -111.8, radiusNm: 5 }] };
+  const ht = S.hazardHits(mk(6500), [tfr]);
+  tst('hazard circle hit', ht.length === 1 && ht[0].lastNm - ht[0].firstNm >= 8 && ht[0].lastNm - ht[0].firstNm <= 11, JSON.stringify(ht.map((x) => [x.firstNm, x.lastNm])));
+  tst('hazard circle missed when far', S.hazardHits(mk(6500), [{ ...tfr, circles: [{ lat: 34.5, lon: -111.8, radiusNm: 5 }] }]).length === 0);
+  // agl: floor 2000 AGL; flight at 4500 MSL over ground 3000 -> 1500 AGL (clear); over ground 0 -> inside
+  const agl = { ...tfr, baseFt: 2000, topFt: 5000, agl: true };
+  tst('hazard agl uses groundFt', S.hazardHits(mk(4500), [agl], { groundFt: 3000 }).length === 0 && S.hazardHits(mk(4500), [agl]).length === 1);
+  // snapshots: first covers the west box (lon -112.3..-112.1), second the east box; leg time near the end => second
+  const west = [[33.2, -112.3], [33.2, -112.1], [33.7, -112.1], [33.7, -112.3]];
+  const snap = { id: 'G1', kind: 'AIRMET', hazard: 'IFR', from: null, to: null, baseFt: null, topFt: null, polys: [], circles: [],
+    snapshots: [{ validMs: T0 - 3600e3, polys: [west] }, { validMs: T1, polys: [box] }] };
+  const hs = S.hazardHits(mk(6500), [snap]);
+  tst('hazard snapshot picks nearest by time', hs.length === 1 && hs[0].firstNm > 22 && hs[0].firstNm < 27, JSON.stringify(hs.map((x) => x.firstNm)));
+  // west area is crossed at 3-15 NM: by time that is ~7-18% of the hour, the first snapshot (T0) is nearest
+  const snap2 = { ...snap, snapshots: [{ validMs: T0, polys: [west] }, { validMs: T1 + 7200e3, polys: [box] }] };
+  const hs2 = S.hazardHits(mk(6500), [snap2]);
+  tst('hazard snapshot first area only with early snapshot', hs2.length === 1 && hs2[0].firstNm < 8, JSON.stringify(hs2.map((x) => x.firstNm)));
+  // ordering by leg then firstNm
+  const two = [{ i: 0, a: A, b: B, profile: prof(9500), startMs: T0, endMs: T1 }, { i: 1, a: B, b: A, profile: prof(9500), startMs: T1, endMs: T1 + 3600e3 }];
+  const ho = S.hazardHits(two, [{ ...air, to: null }, { ...air, id: 'A2', polys: [west], to: null }]);
+  tst('hazard ordering', ho.length === 4 && ho[0].leg === 0 && ho[0].firstNm <= ho[1].firstNm && ho[2].leg === 1 && ho[2].firstNm <= ho[3].firstNm, JSON.stringify(ho.map((x) => [x.leg, x.firstNm])));
+
+  // PIREPs
+  const legs = mk(6500);
+  const pr = [
+    { lat: 33.45, lon: -111.8, tbInt1: 'MOD', icgInt1: '', rawOb: 'X UA /OV X /TB MOD' },
+    { lat: 33.45, lon: -111.9, tbInt1: '', icgInt1: 'LGT', rawOb: 'X UA /IC LGT RIME' },
+    { lat: 33.45, lon: -111.7, tbInt1: '', icgInt2: 'NEGclr', rawOb: 'X UA /WX FV10SM' },
+    { lat: 35.5, lon: -111.8, tbInt1: 'SEV' },
+    { lat: 33.43, lon: -111.6, rawOb: 'ZZZ UA /OV ZZZ /TB LGT-MOD /RM' }
+  ];
+  const pn = S.pirepsNear(legs, pr, 25);
+  tst('pirep within radius, far one dropped', pn.length === 4 && pn.every((x) => x.leg === 0 && x.distNm < 25), String(pn.length));
+  tst('pirep turb flag', pn[0].turb === true && pn.find((x) => x.pirep === pr[0]).ice === false);
+  tst('pirep ice flag', pn.find((x) => x.pirep === pr[1]).ice === true && pn.find((x) => x.pirep === pr[1]).turb === false);
+  tst('pirep NEG is neither', (() => { const x = pn.find((y) => y.pirep === pr[2]); return !x.turb && !x.ice; })());
+  tst('pirep raw text fallback', pn.find((x) => x.pirep === pr[4]).turb === true);
+  tst('pirep radius filter', S.pirepsNear(legs, pr, 1).length === 1, String(S.pirepsNear(legs, pr, 1).length));
+
+  // vfrWx
+  const eta = Date.UTC(2026, 10, 25, 17, 30);
+  const taf = (fc) => ({ validTimeFrom: eta / 1000 - 7200, validTimeTo: eta / 1000 + 7200, fcsts: [Object.assign({ timeFrom: eta / 1000 - 5400, timeTo: eta / 1000 + 7200, fcstChange: null, wdir: 270, wspd: 8, wgst: null, visib: '6+', wxString: null, clouds: [] }, fc)] });
+  const metar = (o) => Object.assign({ obsTime: eta / 1000 - 600, wdir: 270, wspd: 5, wgst: null, visib: '10+', wxString: '', clouds: [{ cover: 'SCT', base: 8000 }], rawOb: 'METAR KGYR' }, o);
+  const wLow = S.vfrWx([metar()], taf({ clouds: [{ cover: 'BKN', base: 2500 }] }), eta);
+  tst('vfrWx low ceiling warn', wLow.some((x) => x.level === 'warn' && x.code === 'ceiling' && /BKN025/.test(x.text) && /3000/.test(x.text)), JSON.stringify(wLow));
+  tst('vfrWx good weather: no warn', S.vfrWx([metar()], taf({ clouds: [{ cover: 'SCT', base: 2500 }] }), eta).filter((x) => x.level === 'warn').length === 0);
+  const wVis = S.vfrWx([metar({ visib: 4 })], taf({}), eta);
+  tst('vfrWx metar visibility', wVis.some((x) => x.code === 'visibility' && /visibility 4 SM/.test(x.text)), JSON.stringify(wVis));
+  const wG = S.vfrWx([metar()], taf({ wgst: 28 }), eta);
+  tst('vfrWx gusts', wG.some((x) => x.code === 'gusts' && /gusts 28 kt/.test(x.text)), JSON.stringify(wG));
+  const wTs = S.vfrWx([metar()], taf({ wxString: 'TSRA' }), eta);
+  tst('vfrWx thunderstorm', wTs.some((x) => x.code === 'thunderstorm'), JSON.stringify(wTs));
+  tst('vfrWx metar overcast / VV', S.vfrWx([metar({ clouds: [{ cover: 'OVC', base: 1200 }] })], null, eta).some((x) => x.code === 'ceiling'));
+  const wNo = S.vfrWx([metar()], null, eta);
+  tst('vfrWx no TAF info', wNo.length === 1 && wNo[0].level === 'info' && wNo[0].code === 'noTaf', JSON.stringify(wNo));
+  const wOut = S.vfrWx([metar()], taf({}), eta + 10 * 3600e3);
+  tst('vfrWx ETA outside TAF', wOut.some((x) => x.level === 'info' && x.code === 'tafOutside'), JSON.stringify(wOut));
+  tst('vfrWx custom thresholds', S.vfrWx([metar({ clouds: [{ cover: 'BKN', base: 3500 }] })], null, eta, { ceilFt: 4000 }).some((x) => x.code === 'ceiling'));
+
+  // TEMPO / PROB groups covering the ETA
+  const tempoTaf = (fc) => { const t = taf({}); t.fcsts.push(Object.assign({ timeFrom: eta / 1000 - 3600, timeTo: eta / 1000 + 3600, fcstChange: 'TEMPO', wdir: null, wspd: null, wgst: null, visib: null, wxString: null, clouds: [] }, fc)); return t; };
+  const wTempo = S.vfrWx([metar()], tempoTaf({ wxString: 'TSRA' }), eta);
+  tst('vfrWx TEMPO thunderstorm', wTempo.some((x) => x.level === 'warn' && x.code === 'thunderstorm' && /TAF TEMPO \d\d\u2013\d\dZ/.test(x.text)), JSON.stringify(wTempo));
+  tst('vfrWx TEMPO ceiling', S.vfrWx([metar()], tempoTaf({ clouds: [{ cover: 'BKN', base: 1500 }] }), eta).some((x) => x.code === 'ceiling' && /TEMPO/.test(x.text)));
+  tst('vfrWx TEMPO not covering ETA ignored', S.vfrWx([metar()], tempoTaf({ wxString: 'TSRA', timeFrom: eta / 1000 + 3600, timeTo: eta / 1000 + 7200 }), eta).filter((x) => x.level === 'warn').length === 0);
+  tst('vfrWx PROB30 visibility', S.vfrWx([metar()], tempoTaf({ fcstChange: 'PROB', probability: 30, visib: 2 }), eta).some((x) => x.code === 'visibility' && /PROB30/.test(x.text)));
+
+  // labels
+  tst('hazardLabel airmet', S.hazardLabel({ ...air, to: T0 + 6 * 3600e3 }) === 'AIRMET TANGO TURB 080\u2013FL180 15\u201321Z', S.hazardLabel({ ...air, to: T0 + 6 * 3600e3 }));
+  tst('hazardLabel tfr', S.hazardLabel(tfr) === 'TFR 6/1234 SFC\u201317999 ft', S.hazardLabel(tfr));
+}
+// ==== end hazards ====
 console.log(fail ? fail + ' FAILED' : 'ALL PASS'); process.exit(fail ? 1 : 0);

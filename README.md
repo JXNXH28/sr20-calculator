@@ -47,6 +47,35 @@ Sign-in is required (Supabase Auth; accounts by admin invite only). **1 token = 
 
 Setup (Supabase project, SQL, SMTP, Vercel env vars): [docs/SETUP.md](docs/SETUP.md).
 
+## OFP builder (`ofp.html`)
+Plans a VFR flight and fills the LAT operational flight plan (form B02): click a route on the FAA TAC/sectional chart,
+edit it on the map, and the navigation log (true/magnetic track, wind triangle, heading, ground speed, time, fuel) is
+computed per leg; the form holds 18 legs and leg 1 is the departure-procedure leg. Print the filled form or export a
+ForeFlight `.fpl`. **Send to T/O sheets** opens the T/O calculator with the leg's route, date, time, flight time, trip
+fuel, take-off fuel and registration filled in (or offers to replace the route / add it as the next leg).
+- Data: FAA TAC/sectional tiles; FAA ADDS airspace, airports and obstacles; terrain from AWS Terrarium tiles; winds aloft
+  from Open-Meteo; magnetic variation from WMM2025. ATO points are placed by admins on `ofp.html`; users can keep
+  personal points.
+- Rules: time and fuel follow the B02 rules (see `nav.js`, tested with `node test.js`); safety checks (airspace,
+  obstacles, terrain clearance) are in `safety.js`.
+- ATO procedures: `ato.js` holds the plate defaults (departures/arrivals with named transitions). Choosing a procedure and a
+  transition inserts every plate landmark as a checkpoint with the plate altitude; the B02 fixed time/NM applies only to the
+  gate leg at KGYR. Admins edit, add, hide or reset procedures and manage ATO points (new, rename, delete, place) on
+  `ofp.html`; edits are stored in the `ato_procedures` table (re-run the OFP part of `db/schema.sql` to create it).
+- Tokens: **3 tokens once per flight**. Finalising the same OFP again with the same date, departure and destination is
+  free; a different flight costs 3 again. Printing and export need a finalised OFP.
+- Winds: new OFPs use **Auto (forecast)**: each leg gets the Open-Meteo (GFS) wind at its altitude, at the leg midpoint and for
+  the UTC hour in which that leg is flown (T/O time plus the EETs before it); the leg's "how" text shows the hour. Existing
+  drafts keep their wind mode.
+- Weather and TFR checks (warnings only, never blocking; layer "Weather & TFR"): SIGMET / convective SIGMET, G-AIRMET and CWA
+  areas the route crosses at its altitude and time, TFRs (AZ, CA, NV, UT, NM, CO, TX) with their own floors and ceilings, PIREPs
+  with turbulence or ice within 25 NM, and METAR/TAF (including TEMPO and PROB groups) at the departure and arrival airport
+  against 3000 ft / 5 SM. Data comes from aviationweather.gov and tfr.faa.gov through the `/api/aw` and `/api/tfr` relays and
+  is cached for 5 minutes (button **Refresh weather**). Hazard forecasts only cover about 12 hours. This is a planning aid:
+  get an official briefing (1800wxbrief / ForeFlight).
+- **Verify everything on the chart.** The checks and the nav log are an aid, not a substitute for flight preparation.
+- Admin: `/admin.html` counts OFPs and lists them next to the calculation log; ledger rows show as "OFP".
+
 ## Airport data
 - `airports.js`: LAT US approved airport list (THB Appendix A, 07 APR 2026): approvals, distance from GYR, notes, time
   zone, and limits checked automatically (LAT MTOM, max T/O temperature, max tailwind per runway, runways not
@@ -80,4 +109,7 @@ Set `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` in Verce
 - `snapshot.js` canonical calculation inputs (tested); `auth.js` sign-in client, `login.html`; `lib/verify.js` JWT check used by
   `middleware.js` (Vercel) and `server.js`; `api/config.js` public Supabase config; `admin.html`/`admin.js` and
   `api/admin/invite.js` admin panel; `db/schema.sql` tables, access rules and token functions
+- OFP: `ofp.html`/`ofp.js` page, `nav.js` navigation maths + WMM (`vendor/wmm.js`), `ofpdata.js` airspace/obstacles/terrain/winds
+  fetching, `safety.js` route safety checks, `ofpform.js` B02 form PDF and ForeFlight `.fpl` export, `ofpprint.js` print,
+  `ato.js` ATO procedures table; `vendor/leaflet.*` map
 - `form1002.pdf` source form, embedded as `form1002.js`; `vendor/` pdf-lib and pdf.js
