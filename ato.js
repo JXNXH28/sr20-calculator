@@ -96,7 +96,7 @@ const procedures = [
     ]),
   mk('GYR-DEP-TWINLAKES', 'KGYR', 'dep', 'Twin Lakes DEP', 'LIBERTY BRIDGE', 5, 7, 3500, null, 10,
     'RWY 21: runway heading to the Gila River, follow it ~230 to Liberty Bridge climbing 3500; RWY 3: 1700, crosswind/downwind climbing 3500 to the Gila River, then follow it to Liberty Bridge. Avoid overflying the housing around Twin Lakes. Monitor and report on 128.92 (Rainbow Valley) passing Liberty Bridge.', [
-      T('BISHOP', 'Bishop', [['WATERMAN WASH 1NM SW', 3500], ['1AZ0 MIDFIELD', 3500]], null,
+      T('BISHOP', 'Bishop', [['WATERMAN WASH 1NM SW', 3500], ['1AZ0', 3500]], null,
         'PPR required for 1AZ0 (no ops during CPS ops). Plate map marks this SOLO. ~190 from Liberty Bridge until 1 NM SW of Waterman Wash, then ~125/115 to cross 1AZ0 midfield at 3500; passing overhead climb on course or enter the pattern. Announce on 130.47 10 NM NW.'),
       T('TIREFARM', 'Tire Farm', [['WATERMAN WASH 1NM SW', 3500], ['TIRE FARM', 4500]], null,
         '~190 from Liberty Bridge until 1 NM SW of Waterman Wash, then ~150 climbing to 4500. Pass Tire Farm 1 NM SW.'),
@@ -124,7 +124,7 @@ const procedures = [
   mk('GYR-ARR-GAP', 'KGYR', 'arr', 'Gap ARR', 'THE GAP', 2, 5, 2500, FS, 2,
     'Arrive at the Gap at 2500, from the Gap descend and maintain 2000 and enter the pattern as directed. Call KGYR tower no closer than 4 NM south of the Gap. Report intentions to Rainbow Valley on 128.92. RWY 21: Sawed-Off Mtn then toward the tower, left DW; RWY 3: golf course 2 mile right base, or PIR then north to Lower Buckeye Rd for right DW.', [
       T('SOUTH', 'South', [], DUAL, 'DUAL ONLY. Arrive from south of the Gap at 2500 (~360).'),
-      T('BISHOP', 'Bishop', [['1AZ0 MIDFIELD', 4500], ['WATERMAN WASH 1NM NE', 2500]], null,
+      T('BISHOP', 'Bishop', [['1AZ0', 4500], ['WATERMAN WASH 1NM NE', 2500]], null,
         'PPR required for 1AZ0 (no ops during CPS ops). Cross 1AZ0 midfield at 4500, descend and maintain 2500, fly ~305 parallel 1 NM NE of Waterman Wash; when able to fly a northerly heading turn direct the Gap.'),
       T('TIREFARM', 'Tire Farm', [['TIRE FARM', 3500], ['WATERMAN WASH 1NM NE', 2500]], null,
         'Cross Tire Farm at 3500, ~350 until 1 NM NE of Waterman Wash, descend and maintain 2500 parallel to the wash; when able to fly a northerly heading turn direct the Gap.'),
@@ -157,7 +157,7 @@ const procedures = [
   // ---- E63 (B02 gives no time or distance; arrival points are not required at off-site airports)
   mk('E63-ARR-RWY22', 'E63', 'arr', 'E63 Pattern Entry RWY 22', 'E63 TRUCK STOP', null, null, 1600, null, 11,
     'Parallel I-8 on its north side (remain north of I-8 at all times). Over the motel/truck stop maneuver for a ~1.5 NM 45 degree entry to left traffic RWY 22; do not extend upwind. Contact Gila Bend AF Aux tower (127.75) ~15 NM out for wind and altimeter; CTAF 122.80. Pattern partly inside the Gila Bend AF Aux Class D.', [
-      T('NORTH', 'North', [['E63 MIDFIELD', 2600], ['BABY CAMELBACK NW', 1600]], null,
+      T('NORTH', 'North', [['E63', 2600], ['BABY CAMELBACK NW', 1600]], null,
         'Cross midfield at 2600, turn toward the NW corner of Baby Camelback Mountain on an easterly heading, keep 2600 for 20 seconds then descend to 1600. Approaching the mountain turn right toward the west using the dirt road south of I-8.'),
       T('EAST', 'East', [['BABY CAMELBACK NW', 1600]], null,
         'Aim for the NW corner of Baby Camelback Mountain, keep visual separation from terrain and descend to 1600. Abeam the mountain turn SW toward I-8.'),
@@ -192,7 +192,6 @@ const points = [
   { name: 'TONOPAH', desc: 'Tonopah (town) on I-10, W of the Hassayampa Wash (Buckeye DEP Tonopah, solo)', plate: BIN + '1' },
   { name: 'WATERMAN WASH 1NM SW', desc: 'Turn point 1 NM SW of Waterman Wash on the ~190 track from Liberty Bridge (Twin Lakes DEP Bishop/Tire Farm)', plate: BIN + '10' },
   { name: 'WATERMAN WASH 1NM NE', desc: 'Point 1 NM NE of Waterman Wash, where the Gap ARR Bishop/Tire Farm transitions join it at 2500', plate: BIN + '2' },
-  { name: '1AZ0 MIDFIELD', desc: 'Midfield over Bishop airport 1AZ0 (PPR), Gap ARR / Twin Lakes DEP Bishop transitions', plate: BIN + '2, 10' },
   { name: 'TIRE FARM', desc: 'Tire Farm (GBN063/D16), S of the Estrella Mtns near Waterman Wash', plate: BIN + '2, 10' },
   { name: 'GLENDALE POWER PLANT', desc: 'Glendale Power Plant on Grand Ave, NE of KGEU (pass 1 NM W arriving, 1 NM E departing)', plate: BIN + '7, 8' },
   { name: 'GILA S OF LUKE AUX 6', desc: 'Gila River crossing due south of Luke Aux 6 (Luke Aux 6 ARR Bishop: descend 2000)', plate: BIN + '9' },
@@ -201,7 +200,6 @@ const points = [
   { name: 'HASSAYAMPA GRAVEL PIT', desc: 'Gravel pit on the Hassayampa Wash N of I-10 (Luke Aux 6 ARR Northwest, solo)', plate: BIN + '9' },
   { name: 'FARM AG PVT', desc: 'NW corner of Farm Ag private strip, W of Buckeye town, S of the railroad (Luke Aux 6 ARR Southwest)', plate: BIN + '9' },
   { name: 'RIGGS RD EXTENSION', desc: 'Western extension of Riggs Rd SE of Gila Crossing, turn point of the KGEU solo routes', plate: BIN + '5, 6' },
-  { name: 'E63 MIDFIELD', desc: 'Midfield crossing over E63 Gila Bend Municipal at 2600 (E63 RWY 22 North transition)', plate: BIN + '11' },
   { name: 'BABY CAMELBACK NW', desc: 'NW corner of Baby Camelback Mountain, E of E63, north of I-8', plate: BIN + '11' },
   { name: 'E63 TRUCK STOP', desc: 'Motel/truck stop on the north side of I-8 SW of E63, start of the 45 entry RWY 22', plate: BIN + '11' },
   { name: 'VOLCANO MTN', desc: 'Black volcano-like mountain south of the Gila River (KBXK Pipeline departure)', plate: BIN + '12' },
@@ -210,6 +208,74 @@ const points = [
   { name: 'TANGO', desc: 'East side of the Maricopa Mountains, west of Waterman Wash, 2 NM south of the pipeline', plate: BIN + '13' },
   { name: 'GBN R-010 PIPELINE', desc: 'GBN VOR R-010 crossing, 2 NM south of the pipeline (Pipeline to KBXK: descend 3000)', plate: BIN + '13' },
 ];
+
+// Default positions from the AFTW landmark map (Arizona Flight Training Workgroup KML, Nov 2025). A position the admin
+// places in the database overrides the default. Plate points that are AFTW landmarks get its position; GILA CROSSING
+// (1 NM NE) and GILA CROSSING 1NM SW are offset 1 NM from the AFTW Gila Crossing landmark, as the plates describe.
+// Not taken over: altitude/aerobatic/frequency labels, practice-area name labels and '303'.
+const DEFAULT_POS = {
+  'ARLINGTON': [33.32563, -112.76381],
+  'GILA CROSSING': [33.28678, -112.15287],
+  'GILA CROSSING 1NM SW': [33.26321, -112.18106],
+  'LUKE AUX 6': [33.44089, -112.51176],
+  'NORTH TEST TRACK': [33.05125, -111.93622],
+  'PIR': [33.37496, -112.31680],
+  'PROVING GROUNDS': [33.74850, -112.79090],
+  'THE GAP': [33.34223, -112.35859],
+  'TIRE FARM': [33.03377, -112.38234],
+  'TONOPAH': [33.49346, -112.93747],
+};
+const LANDMARKS = [
+  ['A MOUNTAIN', 32.21021, -110.99230], ['AGUA CALIENTE', 32.98434, -113.32370], ['AJ LANDFILL', 33.36723, -111.53085],
+  ['ANTHEM', 33.85516, -112.11788], ['APACHE JUNCTION', 33.41474, -111.54970], ['AREA 51', 32.79550, -111.44492],
+  ['ARIZONA CITY', 32.74826, -111.67134], ['BAPCHULE', 33.11765, -111.88647], ['BARTLETT DAM', 33.81781, -111.63178],
+  ['BEELINE HIGHWAY', 33.62776, -111.55891], ['BEND IN CAREFREE', 33.80055, -112.09162], ['BIG WHITE BARN', 34.96140, -112.60226],
+  ['BLACK CANYON CITY', 34.06546, -112.14260], ['BLACK MOUNTAIN NE', 33.81367, -111.94107], ['BLACK MOUNTAIN SE', 32.78464, -110.95945],
+  ['BLACK MOUNTAIN TUCSON', 32.08294, -111.05734], ['BLACKWATER', 33.03048, -111.61940], ['CAMP WOOD', 34.92095, -112.87779],
+  ['CAMPGROUND', 33.69470, -111.73167], ['CANYON LAKE', 33.55048, -111.43201], ['CEMENT PLANT SE', 33.25154, -111.41499],
+  ['CEMENT PLANT TUCSON', 32.40966, -111.15169], ['CENTRAL AZ COLLEGE', 32.95792, -111.65350], ['CHECKERBOARD', 34.80755, -112.67568],
+  ['CHINO FIELDS', 34.81089, -112.45152], ['CIRCLE CITY', 33.81488, -112.58137], ['CIRCLE FIELD', 35.05611, -112.67808],
+  ['CLARKDALE CEMENT PLANT', 34.78034, -112.08403], ['CONFLUENCE', 33.54670, -111.66078], ['COOLIDGE TOWN', 32.97573, -111.52359],
+  ['CORDES JUNCTION', 34.32887, -112.12117], ['COUNTRY CLUB', 34.55773, -112.26692], ['CROME PEAK', 32.72828, -111.15267],
+  ['DONNELLY TRUCK STOP', 32.83305, -112.13477], ['DRAG STRIP', 33.71915, -112.47451], ['DRAKE CEMENT PLANT', 34.98073, -112.37285],
+  ['DYNAMITE ROAD', 33.74128, -111.75722], ['EAGLE ROOST PRIVATE', 33.91999, -113.16777], ['EAGLETAIL PRIVATE', 33.39558, -113.22337],
+  ['EL MOLINO TANK', 33.18924, -111.34110], ['FAIRGROUNDS', 34.64758, -112.27914], ['FARMS PRIVATE', 32.98874, -112.02336],
+  ['FIREBIRD LAKE', 33.26920, -111.96488], ['FLORENCE', 33.03102, -111.38433], ['FLORENCE CROP CIRCLES', 33.11897, -111.41468],
+  ['FLORENCE JUNCTION', 33.25560, -111.33890], ['FOUNTAIN HILLS', 33.60201, -111.71186], ['FOUR PEAKS', 33.68445, -111.32414],
+  ['G.M. PRIVATE', 32.90202, -112.23776], ['GLIDERPORT', 33.80083, -112.24903], ['GOLD CANYON', 33.36004, -111.45022],
+  ['GOODWIN GLIDER PORT', 34.67394, -112.30234], ['GREEN VALLEY', 31.87023, -110.98669], ['HARQ POWER PLANT', 33.47583, -113.11275],
+  ['HIGHWAY 169 OVERPASS', 34.51429, -111.99228], ['HORSESHOE LAKE', 33.99952, -111.72521], ['I-10 GREENFIELDS', 33.08347, -111.81645],
+  ['I-8 TOWER', 32.84383, -112.30618], ['JOHNSONS RANCH', 33.16280, -111.55994], ['KEARNY TOWN', 33.05772, -110.90887],
+  ['KIRKLAND JUNCTION', 34.36996, -112.66531], ['KOMELIK MINE', 32.52369, -111.89700], ['LAKE PLEASANT MARINA', 33.85032, -112.26019],
+  ['LAKE ST CLAIR', 32.64992, -111.92957], ['LAKESIDE PRISON', 33.20952, -112.65272], ['LAKESIDE PRIVATE', 33.11258, -112.66277],
+  ['MARICOPA MOUNTAIN', 33.14662, -112.02008], ['MARICOPA TOWN', 33.05674, -112.04882], ['MAYER STACK', 34.39872, -112.22529],
+  ['MINERAL MOUNTAIN MINE', 33.18095, -111.24819], ['MONASTARY', 32.91978, -111.26268], ['MOUNT FAGAN', 31.90005, -110.72462],
+  ['MR.VOLCANO', 33.06485, -111.51487], ['NEW RIVER ROAD', 33.88244, -112.17715], ['NEWMANS PEAK', 32.72097, -111.39583],
+  ['NORTH CATTLE SHEDS', 33.30934, -112.50633], ['NORTH LAKE PLEASANT', 33.91138, -112.28439], ['NORTH PROVING GROUNDS', 33.79377, -112.49906],
+  ['NORTHERN BALD SPOT', 35.00874, -112.35203], ['OLD DRAKE VOR', 34.90114, -112.41768], ['ORME SCHOOL AIRPORT', 34.42837, -112.06269],
+  ['OUTLET MALLS', 33.87369, -112.14998], ['PAINTED ROCK DAM', 33.07412, -113.01332], ['PALOVERDE POWER PLANT', 33.38727, -112.86521],
+  ['PERKINSVILLE VALLEY', 34.90229, -112.19548], ['PICACHO PEAK', 32.63554, -111.40279], ['PICACHO RESERVOIR', 32.85220, -111.48130],
+  ['PINNACLE PEAK', 33.72762, -111.86457], ['PIPELINE', 33.87120, -112.19775], ['POINT LIMA', 33.40941, -111.61268],
+  ['POINT WHISKEY', 33.38878, -111.50868], ['POINT X-RAY', 33.17059, -112.28435], ['PRESCOTT RESORT', 34.55077, -112.44692],
+  ['PRISON', 33.83364, -112.16835], ['PUMPING STATION NW', 33.66097, -112.68983], ['PUMPING STATION TUCSON', 32.36123, -111.37408],
+  ['QUINTERO GOLF COURSE', 33.84689, -112.41863], ['RADOME', 33.98099, -111.79794], ['RAILROAD TRACKS', 33.24237, -112.99604],
+  ['RAINBOW GREENFIELDS', 33.22655, -112.43431], ['RAINBOW RANCHO', 33.22160, -112.30729], ['RENAISSANCE FEST', 33.32107, -111.43121],
+  ['RINCON PEAK', 32.11961, -110.51706], ['RIO VERDE COMMUNITY', 33.72405, -111.67568], ['RITTENHOUSE', 33.25743, -111.51707],
+  ['SACATON PEAK', 33.00258, -111.67530], ['SACATON TOWN', 33.07237, -111.74352], ['SAGUARO LAKE', 33.57001, -111.51942],
+  ['SAHUARITA', 31.95716, -110.95589], ['SANTAN PEAK', 33.17311, -111.71160], ['SAWTOOTH STREET PATTERNS', 32.55572, -111.71899],
+  ['SEMI-CIRCLE RANCH', 34.52990, -112.98283], ['SERENE PRIVATE', 32.99485, -112.27231], ['SHOOTING RANGE', 33.80435, -112.15209],
+  ['SILVER BELL MINE', 32.40313, -111.52531], ['SKULL VALLEY', 34.50397, -112.68487], ['SOUTH CATTLE SHEDS', 33.27163, -112.49083],
+  ['SOUTH CROP CIRCLES', 32.90398, -112.05790], ['SOUTH PROVING GROUNDS', 33.69617, -112.49731], ['SOUTH TEST TRACK', 32.94262, -111.98237],
+  ['SOUTHERN BALD SPOT', 34.94875, -112.38453], ['ST MATTHEWS', 34.76804, -112.25257], ['STREET PATTERN', 33.80197, -111.77834],
+  ['SUBSTATION', 33.70869, -112.32255], ['SUPER MALL', 33.38978, -111.68949], ['SUPERIOR TOWN', 33.29581, -111.09831],
+  ['SYCAMORE CREEK', 33.65909, -111.61132], ['TABLE MOUNTAIN', 34.71493, -112.53362], ['TABLE TOP', 32.75194, -112.12456],
+  ['THE GAP SE', 33.17310, -111.67104], ['THUMB BUTTE', 34.54680, -112.51919], ['TONOPAH PRIVATE', 33.53335, -112.96029],
+  ['TRI TRAILS', 32.97455, -111.12539], ['TWIN FIELDS', 34.62151, -112.64805], ['TWIN LAKES', 33.35015, -112.43623],
+  ['WAGON WHEEL', 33.41196, -111.72342], ['WATER SKI LAKE', 33.17207, -111.47364], ['WATERMANS WASH', 33.17645, -112.36685],
+  ['WITCHS HAT', 33.11536, -111.64858], ['WOOLSEY PEAK', 33.16772, -112.88484],
+];
+points.forEach((p) => { const d = DEFAULT_POS[p.name]; if (d) { p.lat = d[0]; p.lon = d[1]; } });
+LANDMARKS.forEach((l) => points.push({ name: l[0], desc: 'AFTW landmark (AFTW map Nov 2025)', lat: l[1], lon: l[2], aftw: true }));
 
 // ---------- helpers
 const forAirport = (icao, kind, procs) => (Array.isArray(procs) ? procs : procedures).filter((p) => p && p.airport === icao && (!kind || p.kind === kind));
@@ -240,7 +306,8 @@ const pointNames = (procs) => {
   return Array.from(s).sort();
 };
 
-const lookup = (byName, name) => byName[name] || byName[String(name).toUpperCase()];
+// byName: {name: point} or a function name -> point (the OFP page also resolves LAT airport idents, e.g. '1AZ0', to the airport)
+const lookup = (byName, name) => (typeof byName === 'function' ? byName(name) : byName[name] || byName[String(name).toUpperCase()]);
 const usable = function (proc, tr, byName) {
   if (arguments.length < 3) { byName = tr; tr = null; }
   if (!proc || !byName) return false;

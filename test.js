@@ -354,8 +354,22 @@ diff('snapshot sheetMode pair', base, chg({ sheetMode: 'pair' }));
   ok('Power Plant DEP +10 into KGEU, PP dep/arr dual only', byId('GYR-DEP-POWERPLANT').extraMinDest.KGEU === 10 && byId('GYR-DEP-POWERPLANT').dualOnly && byId('GYR-ARR-POWERPLANT').dualOnly);
   // point names
   const listed = new Set(ATO.points.map((p) => p.name)), all = ATO.pointNames(ATO.procedures);
-  ok('every gate/transition point is uppercase, <=40 chars and listed in ATO.points',
-    all.length > 20 && all.every((n) => n === n.toUpperCase() && n.length <= 40 && listed.has(n)) && ATO.points.every((p) => p.desc && all.indexOf(p.name) >= 0));
+  ok('every gate/transition point is uppercase, <=40 chars and listed in ATO.points (or a LAT airport ident)',
+    all.length > 20 && all.every((n) => n === n.toUpperCase() && n.length <= 40 && (listed.has(n) || LAT[n])) && ATO.points.every((p) => p.desc && (all.indexOf(p.name) >= 0 || p.aftw)));
+  ok('1AZ0 / E63 transitions cross the airport itself (no midfield points)', !all.some((n) => /MIDFIELD/.test(n)) && ['1AZ0', 'E63'].every((n) => all.includes(n)));
+  const bish = byId('GYR-ARR-GAP') || ATO.procedures.find((p) => (p.transitions || []).some((t) => t.points.some((q) => q.name === '1AZ0')));
+  const bt = bish.transitions.find((t) => t.points.some((q) => q.name === '1AZ0'));
+  ok('usable() accepts a lookup function', ATO.usable(bish, bt.id, (n) => ({ lat: 1, lon: 1 })) && !ATO.usable(bish, bt.id, (n) => (n === '1AZ0' ? null : { lat: 1, lon: 1 })));
+  // AFTW landmark map defaults (Nov 2025 KML)
+  const P = (n) => ATO.points.find((p) => p.name === n), NM = (a, b) => require('./nav.js').dist(a, b);
+  const names = ATO.points.map((p) => p.name);
+  ok('AFTW: 140 landmarks, names unique, upper case, <=40 chars', ATO.points.filter((p) => p.aftw).length === 140
+    && new Set(names).size === names.length && names.every((n) => n === n.toUpperCase() && n.length <= 40));
+  ok('AFTW: every default position is in Arizona', ATO.points.filter((p) => p.lat != null).every((p) => p.lat > 31.3 && p.lat < 37 && p.lon > -114.9 && p.lon < -109));
+  ok('AFTW: plate points take the landmark position (THE GAP 5 NM S of KGYR, LUKE AUX 6, TIRE FARM)', NM(P('THE GAP'), { lat: 33.42, lon: -112.376 }) < 6
+    && Math.abs(P('LUKE AUX 6').lat - 33.4409) < 0.001 && P('TIRE FARM').lat != null && P('THE GAP SE').lon > -111.7);
+  ok('AFTW: GILA CROSSING (1 NM NE) and 1NM SW are 2 NM apart', Math.abs(NM(P('GILA CROSSING'), P('GILA CROSSING 1NM SW')) - 2) < 0.05);
+  ok('AFTW: labels are not points', !names.some((n) => /SFC|AGL MIN|AEROB|FREQ|PRACTICE AREA|^303$/.test(n)));
   ok('pointNames sorted unique', all.join('|') === Array.from(new Set(all)).sort().join('|'));
 }
 // ==== end ato2 ====
