@@ -205,6 +205,12 @@
           ? "Waypoint library not available yet (database setup pending). You can still plan with map points."
           : "Waypoint library unavailable: " + String((e && e.message) || e);
       }
+      // built-in default positions (AFTW landmark map); a point placed in the database overrides its default
+      ATO.points.forEach((p) => {
+        if (!isNum(p.lat) || !isNum(p.lon) || lib.byName[p.name]) return;
+        const o = { id: null, name: p.name, ident: null, lat: p.lat, lon: p.lon, notes: p.desc, shared: true, builtin: true };
+        lib.ato.push(o); lib.byName[p.name] = o;
+      });
       renderLibrary(); renderProcSelects(); renderAto(); renderProcAdmin(); compute();
     }
 
@@ -1178,8 +1184,8 @@
       if (profile.role !== "admin") return;
       byId("atoList").innerHTML = atoEntries().map((p) => {
         const w = p.w, tip = (p.desc || "") + (w && w.notes && w.notes !== p.desc ? "\n" + w.notes : "");
-        return `<div class="arow${p.unused ? " unused" : ""}"><button type="button" class="pt ${placing === p.name ? "sel" : ""}" data-ato="${esc(p.name)}" title="${esc(tip)}">${esc(p.name)}<small>${w ? "placed" : "not placed"}${p.unused ? " · unused" : ""}</small></button>`
-          + (w ? `<button type="button" class="mini" data-ar="${esc(p.name)}">Rename</button><button type="button" class="mini" data-ad="${esc(p.name)}">Delete</button>` : "") + "</div>";
+        return `<div class="arow${p.unused ? " unused" : ""}"><button type="button" class="pt ${placing === p.name ? "sel" : ""}" data-ato="${esc(p.name)}" title="${esc(tip)}">${esc(p.name)}<small>${w ? (w.builtin ? "default position" : "placed") : "not placed"}${p.unused ? " · unused" : ""}</small></button>`
+          + (w && !w.builtin ? `<button type="button" class="mini" data-ar="${esc(p.name)}">Rename</button><button type="button" class="mini" data-ad="${esc(p.name)}">Delete</button>` : "") + "</div>";
       }).join("");
       byId("atoNames").innerHTML = atoEntries().map((p) => `<option value="${esc(p.name)}">`).join("");
     }
@@ -1209,7 +1215,8 @@
       }
       if (del) {
         const w = lib.byName[del.dataset.ad]; if (!w) return;
-        if (!confirm(`Delete the ATO point ${w.name}? Procedures that use it will show it as not placed. This cannot be undone.`)) return;
+        const dflt = ATO.points.some((p) => p.name === w.name && isNum(p.lat));
+        if (!confirm(dflt ? `Delete the placed position of ${w.name}? It goes back to its default position (AFTW map).` : `Delete the ATO point ${w.name}? Procedures that use it will show it as not placed. This cannot be undone.`)) return;
         try { await Auth.rpc("admin_delete_waypoint", { p_id: w.id }); toast(w.name + " deleted"); await loadWaypoints(); }
         catch (err) { toast("Could not delete " + w.name + ": " + dbErr(err)); }
         return;
